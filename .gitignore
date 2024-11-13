@@ -1,0 +1,7 @@
+build/
+.vscode/
+.vs/
+gen/
+*.user
+.cache
+**__pycache__
