@@ -32,7 +32,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(BUILD_SHARED_LIBS         "Build libs as shared"         OFF)
 option(RPCXX_WITH_CODEGEN        "Compile Code Generator"       ON)
-option(RPCXX_TEST_SANITIZERS     "Enable sanitizers"            ON)
+option(RPCXX_TEST_SANITIZERS     "Enable sanitizers"            OFF)
 option(RPCXX_TEST_RPS            "Build QT5 based RPS test"     OFF)
 option(RPCXX_WITH_TESTS          "Build tests"                  OFF)
 
