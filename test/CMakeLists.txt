@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ]]
 
+enable_testing()
 
 add_library(rpcxx-test-deps INTERFACE)
 if(RPCXX_TEST_SANITIZERS AND NOT MSVC)
@@ -39,7 +40,7 @@ endif()
 function(do_register target source)
     add_executable(${target} ${source})
     target_link_libraries(${target} PUBLIC rpcxx-test-deps)
-    add_test(NAME ${target} COMMAND ${target})
+    add_test(NAME ${target} COMMAND $<TARGET_FILE:${target}>)
 endfunction()
 
 do_register(rpcxx-rpc-test rpcxx/rpc_test.cpp)
