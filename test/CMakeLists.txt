@@ -24,7 +24,12 @@ SOFTWARE.
 
 enable_testing()
 
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
 add_library(rpcxx-test-deps INTERFACE)
+target_link_libraries(rpcxx-test-deps INTERFACE Threads::Threads)
+
 if(RPCXX_TEST_SANITIZERS AND NOT MSVC)
     target_compile_options(rpcxx-test-deps INTERFACE -fsanitize=undefined,address)
     target_link_options(rpcxx-test-deps INTERFACE -fsanitize=undefined,address)
