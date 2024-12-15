@@ -103,7 +103,7 @@ struct Formatter {
         return JsonView(body.data(), proto == Compliant ? 3 : 2);
     }
     JsonView MakeError(JsonView id, RpcException const& exception) noexcept {
-        errWrapper = {exception};
+        errWrapper.Setup(exception);
         body = {{
             {Fs::Id, id},
             {Fs::Error, errWrapper.View()},

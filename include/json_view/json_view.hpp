@@ -870,11 +870,12 @@ JsonView staticView(T const& obj, JsonPair* storage, unsigned& consumed) {
 template<typename T, typename = std::enable_if_t<describe::is_described_struct_v<T>>>
 struct StaticJsonView {
     StaticJsonView() noexcept = default;
-    StaticJsonView(T const& obj) {
+    void Setup(T const& obj) {
         unsigned consumed = 0;
         JsonPair* out = storage;
         root = detail::staticView(obj, out, consumed);
     }
+    StaticJsonView(StaticJsonView&&) = delete;
     JsonView View() const noexcept {
         return root;
     }
