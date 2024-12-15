@@ -53,7 +53,7 @@ enum Type : int16_t {
 
 enum Flags : short {
     f_none      = 0,
-    f_sorted    = 1 << 0, //is object + keys are sorted and unique
+    f_indexed    = 1 << 0, // t_custom: is object + keys are indeces (not strings). 
 };
 
 constexpr Type operator|(Type l, Type r) noexcept {

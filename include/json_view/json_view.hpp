@@ -30,6 +30,7 @@ SOFTWARE.
 #include "json_view/alloc.hpp"
 #include "trace_frame.hpp"
 #include "meta/meta.hpp"
+#include <algorithm>
 #include <limits>
 #include <cmath>
 #include <string.h>
@@ -48,7 +49,7 @@ using std::string_view;
 
 //! Attributes
 
-//! Convert structs as tuples of thier fields
+//! Convert structs as tuples (arrays) of fields
 struct StructAsTuple {};
 
 struct FieldIndexBase {};
@@ -59,10 +60,6 @@ struct FieldIndex : FieldIndexBase {
 };
 //! Convert enums not into strings, but into integers
 struct EnumAsInteger {};
-//! Inherit to mark all fields as skippable
-struct SkipMissing : describe::Attrs<SkipMissing> {};
-//! Mark field as required (it is by default)
-struct Required {};
 //! Subclass will be used as a validator for fields
 struct FieldValidator {static void validate(...) = delete;};
 //! Subclass will be used as a validator for classes
@@ -70,7 +67,6 @@ struct ClassValidator {static void validate(...) = delete;};
 //! Helper for shorter code. Can be inherited or used as an attr. Will call T::validate(U)
 template<typename T>
 struct ValidatedWith : FieldValidator, ClassValidator {
-    using GetAttrs = describe::Attrs<ValidatedWith<T>>;
     template<typename U> static void validate(U& val) { T::validate(val); }
 };
 struct EnumFallbackBase {};
@@ -97,6 +93,7 @@ template<typename T, typename = void> struct Convert;
 
 struct JsonView
 {
+    struct sorted {};
     using value_type = JsonView;
     JsonView(Data d) noexcept : data(d) {}
     JsonView(std::nullptr_t = {}) noexcept {
@@ -141,14 +138,19 @@ struct JsonView
         data.type = t_array;
     }
     template<unsigned size>
-    JsonView(const JsonView(&arr)[size]) noexcept :
+    JsonView(const JsonView(&arr)[size], sorted) noexcept :
         JsonView(arr, size)
     {}
-    explicit JsonView(const JsonPair* object, unsigned size) noexcept {
+    explicit JsonView(const JsonPair* object, unsigned size, sorted) noexcept {
         data.size = size;
         data.d.object = object;
         data.type = t_object;
     }
+    template<unsigned size>
+    JsonView(JsonView(&arr)[size]) noexcept :
+        JsonView(arr, size)
+    {}
+    explicit JsonView(JsonPair* object, unsigned size) noexcept;
     template<unsigned size>
     JsonView(const JsonPair(&obj)[size]) noexcept :
         JsonView(obj, size)
@@ -289,7 +291,7 @@ inline JsonView EmptyArray() {
 }
 
 struct JsonPair {
-    string_view key;
+    Key key;
     JsonView value;
 };
 
@@ -326,6 +328,13 @@ struct JsonView::AsArr {
 protected:
     JsonView j;
 };
+
+inline JsonView::JsonView(JsonPair *object, unsigned int size) noexcept {
+    // todo
+    data.size = size;
+    data.d.object = object;
+    data.type = t_object;
+}
 
 inline typename JsonView::AsObj JsonView::Object(bool check) const {
     return {*this, check};
@@ -367,17 +376,18 @@ inline JsonPair* MakeObjectOf(unsigned count, Arena& alloc) {
 }
 
 namespace detail {
+
 inline const JsonPair* sortedFind(const JsonPair* object, unsigned len, string_view key) {
     auto first = object;
     while (len > 0) {
         auto half = len >> 1;
         auto middle = first + half;
-        if (middle->key < key) {
+        if (middle->key.String() < key) {
             first = middle;
             ++first;
             len = len - half - 1;
         } else {
-            if (middle->key == key) {
+            if (middle->key.String() == key) {
                 return middle;
             }
             len = half;
@@ -668,9 +678,8 @@ template<typename T>
 struct is_optional<std::optional<T>> : std::true_type {};
 
 namespace detail {
-template<typename T> void deserializeFieldsSorted(T& obj, JsonView json, TraceFrame const& frame);
 template<typename T> void deserializeFields(T& obj, JsonView json, TraceFrame const& frame);
-template<typename T> void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame);
+template<typename T> void deserializeFromTuple(T& obj, JsonView json, TraceFrame const& frame);
 template<typename T> JsonView serializeAsTuple(T const& value, Arena& alloc);
 template<typename Validator, typename T> void runValidator(T& output, TraceFrame const& next);
 }
@@ -679,21 +688,18 @@ template<typename T, if_struct<T> = 1>
 void FromJson(T& out, JsonView json, TraceFrame const& frame) {
     if constexpr (describe::has_attr_v<StructAsTuple, T>) {
         json.AssertType(t_array, frame);
-        detail::deserializeAsTuple(out, json, frame);
-    } else if (json.HasFlag(f_sorted)) {
-        json.AssertType(t_object, frame);
-        detail::deserializeFieldsSorted(out, json, frame);
+        detail::deserializeFromTuple(out, json, frame);
     } else {
         json.AssertType(t_object, frame);
-        detail::deserializeFields(out, json, frame);
+        detail::deserializeFieldsSorted(out, json, frame);
     }
-    using validator = describe::extract_attr_t<ClassValidator, T>;
+    using validator = describe::extract_t<ClassValidator, T>;
     detail::runValidator<validator>(out, TraceFrame(describe::Get<T>().name, frame));
 }
 
 template<typename T, if_struct<T> = 1>
 JsonView IntoJson(T const& value, Arena& ctx) {
-    if constexpr (describe::has_attr_v<StructAsTuple, T>) {
+    if constexpr (describe::has_v<StructAsTuple, T>) {
         return detail::serializeAsTuple(value, ctx);
     } else {
         constexpr auto desc = describe::Get<T>();
@@ -708,7 +714,6 @@ JsonView IntoJson(T const& value, Arena& ctx) {
         result.type = t_object;
         result.size = count;
         result.d.object = obj;
-        result.flags = f_sorted;
         return JsonView(result);
     }
 }
@@ -719,7 +724,7 @@ JsonView IntoJson(T const& value, Arena&) {
         return JsonView(std::underlying_type_t<T>(value));
     } else {
         string_view name;
-        using fallback = describe::extract_attr_t<EnumFallbackBase, T>;
+        using fallback = describe::extract_t<EnumFallbackBase, T>;
         if (!describe::enum_to_name(value, name)) {
             if constexpr (std::is_void_v<fallback>) {
                 throw std::runtime_error(
@@ -752,7 +757,7 @@ void FromJson(T& out, JsonView json, TraceFrame const& frame) {
         out = T(asUnder);
     } else {
         auto name = json.Get<string_view>(frame);
-        using fallback = describe::extract_attr_t<EnumFallbackBase, T>;
+        using fallback = describe::extract_t<EnumFallbackBase, T>;
         if (!describe::name_to_enum(name, out)) {
             if constexpr (std::is_void_v<fallback>) {
                 auto msg = "invalid string for enum '"
@@ -917,14 +922,14 @@ inline JsonView tupleGet(bool required, unsigned idx, const JsonView* arr, unsig
 }
 
 template<typename T>
-void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame) {
+void deserializeFromTuple(T& obj, JsonView json, TraceFrame const& frame) {
     constexpr auto desc = describe::Get<T>();
     unsigned count = 0;
     auto arr = json.GetUnsafe().d.array;
     auto sz = json.GetUnsafe().size;
     desc.for_each_field([&](auto f){
         using F = decltype(f);
-        using Idx = describe::extract_attr_t<FieldIndexBase, F>;
+        using Idx = describe::extract_t<FieldIndexBase, F>;
         unsigned index;
         if constexpr (!std::is_void_v<Idx>) index = Idx::value;
         else index = count;
@@ -932,7 +937,7 @@ void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame) {
         auto src = tupleGet(isRequired<F>(), index, arr, sz, frame);
         TraceFrame fieldFrame(f.name, frame);
         src.GetTo(output, fieldFrame);
-        using validator = describe::extract_attr_t<FieldValidator, F>;
+        using validator = describe::extract_t<FieldValidator, F>;
         runValidator<validator>(output, fieldFrame);
         count++;
     });
@@ -940,7 +945,7 @@ void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame) {
 
 template<typename Field>
 constexpr unsigned getIdxFor() {
-    using Explicit = describe::extract_attr_t<FieldIndexBase, Field>;
+    using Explicit = describe::extract_t<FieldIndexBase, Field>;
     if constexpr (std::is_void_v<Explicit>) {
         return 0;
     } else {
@@ -948,15 +953,16 @@ constexpr unsigned getIdxFor() {
     }
 }
 
-template<typename T, typename P, typename...Fields>
-constexpr unsigned maxIdxFor(describe::Description<T, P, Fields...>) {
-    constexpr auto simple = sizeof...(Fields);
-    constexpr std::array fromAttr{getIdxFor<Fields>()...};
-    for (auto i: fromAttr) {
-        if (i > simple) {
-            return i;
+template<typename T>
+constexpr unsigned maxIdxFor() {
+    constexpr auto simple = describe::fields_count<T>();
+    constexpr std::array<unsigned, simple + 1> fromAttr{simple};
+    unsigned idx = 1;
+    describe::Get<T>::for_each([&](auto f){
+        if constexpr (f.is_field) {
+
         }
-    }
+    });
     return simple;
 }
 
@@ -964,43 +970,21 @@ template<typename T>
 JsonView serializeAsTuple(const T &value, Arena &alloc)
 {
     constexpr auto desc = describe::Get<T>();
-    constexpr auto total = maxIdxFor(desc);
+    constexpr auto total = maxIdxFor<T>();
     auto arr = MakeArrayOf(total, alloc);
     unsigned count = 0;
-    desc.for_each_field([&](auto f){
-        using F = decltype(f);
-        constexpr auto manual = getIdxFor<F>();
-        auto idx = manual ? manual : count;
-        arr[idx] = JsonView::From(f.get(value), alloc);
-        count++;
+    desc.for_each([&](auto f){
+        if constexpr (f.is_field) {
+            using F = decltype(f);
+            constexpr auto manual = getIdxFor<F>();
+            auto idx = manual ? manual : count;
+            arr[idx] = JsonView::From(f.get(value), alloc);
+            count++;
+        }
     });
     return JsonView(arr, total);
 }
 
-template<typename T>
-void deserializeFields(T& obj, JsonView json, TraceFrame const& frame) {
-    constexpr auto desc = describe::Get<T>();
-    constexpr auto helpers = prepFields<T>();
-    auto thisRun = helpers;
-    for (auto pair: json.Object()) {
-        unsigned count = 0;
-        desc.for_each_field([&](auto field){
-            if (pair.key == field.name) {
-                thisRun[count++].hit = true;
-                auto& output = field.get(obj);
-                TraceFrame next(field.name, frame);
-                pair.value.GetTo(output, next);
-                using validator = describe::extract_attr_t<FieldValidator, decltype(field)>;
-                runValidator<validator>(output, next);
-            }
-        });
-    }
-    for (auto& field: thisRun) {
-        if (field.required && !field.hit) {
-            json.throwKeyError(field.name, frame);
-        }
-    }
-}
 
 template<typename T>
 void deserializeFieldsSorted(T& obj, JsonView json, TraceFrame const& frame) {
@@ -1016,13 +1000,14 @@ void deserializeFieldsSorted(T& obj, JsonView json, TraceFrame const& frame) {
                 f->GetTo(output, next);
             }
         }
-        using validator = describe::extract_attr_t<FieldValidator, F>;
+        using validator = describe::extract_t<FieldValidator, F>;
         runValidator<validator>(output, next);
     });
 }
 
 template<typename To, typename FromT>
-inline To intChecked(JsonView j, FromT our, TraceFrame const& frame) noexcept(is_lossless<FromT, To>::value)
+inline To intChecked(JsonView j, FromT our, TraceFrame const& frame)
+    noexcept(is_lossless<FromT, To>::value)
 {
     (void)j;
     using is_lossless = is_lossless<FromT, To>;

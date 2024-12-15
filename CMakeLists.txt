@@ -41,7 +41,7 @@ include(cmake/CPM.cmake)
 
 CPMAddPackage("gh:p-ranav/argparse@3.0")
 CPMAddPackage("gh:fmtlib/fmt#11.0.2")
-CPMAddPackage("gh:cyanidle/describe@1.0")
+CPMAddPackage("gh:cyanidle/describe@3.0")
 
 add_library(rpcxx-warnings INTERFACE)
 add_library(rpcxx-options INTERFACE)

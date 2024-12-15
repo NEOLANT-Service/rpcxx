@@ -28,6 +28,7 @@ SOFTWARE.
 #include <string_view>
 #include <string>
 #include "meta/meta.hpp"
+#include "./key.hpp"
 
 namespace jv
 {
@@ -35,29 +36,24 @@ namespace jv
 struct TraceFrame {
     constexpr TraceFrame() noexcept {}
     TraceFrame(TraceFrame&&) = delete;
-    constexpr TraceFrame(unsigned idx, TraceFrame const& prev) noexcept :
-        prev(&prev), size(idx), str(nullptr)
+    constexpr TraceFrame(unsigned _idx, TraceFrame const& prev) noexcept :
+        prev(&prev), key(_idx)
     {}
-    constexpr TraceFrame(std::string_view key, TraceFrame const& prev) noexcept :
-        prev(&prev), size(unsigned(key.size())), str(key.data())
-    {
-        str = str ? str : "";
-    }
+    constexpr TraceFrame(std::string_view _key, TraceFrame const& prev) noexcept :
+        prev(&prev), key(_key)
+    {}
     template<typename F> void Walk(F&& f) const {
         auto node = prepareWalk();
         while(node) {
-            if(node->str) f(std::string_view{node->str, node->size});
-            else f(node->size);
+            node->key.Visit(f);
             node = node->next;
         }
     }
     constexpr void SetIndex(unsigned _idx) noexcept {
-        size = _idx;
-        str = nullptr;
+        key = {_idx};
     }
-    constexpr void SetKey(std::string_view key) noexcept {
-        size = unsigned(key.size());
-        str = key.data();
+    constexpr void SetKey(std::string_view _key) noexcept {
+        key = {_key};
     }
     std::string PrintTrace() const
     {
@@ -91,8 +87,7 @@ private:
 
     const TraceFrame* prev{};
     mutable const TraceFrame* next{};
-    unsigned size{};
-    const char* str{};
+    Key key;
 };
 
 }
