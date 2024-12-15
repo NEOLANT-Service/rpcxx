@@ -264,7 +264,6 @@ struct AST
     vector<Type> types;
     vector<Notify> notify;
     vector<Method> methods;
-    vector<string> attrs;
 };
 
 struct GenParams

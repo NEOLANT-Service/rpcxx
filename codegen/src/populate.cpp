@@ -146,19 +146,6 @@ static Type tryLookup(string_view name, Namespace& ns, FormatContext& ctx) {
     return t->second;
 }
 
-static void populateAttrs(lua_State* L, vector<string>& attrs) {
-    if (lua_type(L, -1) != LUA_TTABLE) {
-        lua_pop(L, 1);
-        return;
-    }
-    iterateTableConsume(L, [&]{
-        auto attr = string{getSV(L)};
-        if (std::find(attrs.begin(), attrs.end(), attr) == attrs.end()) {
-            attrs.push_back(std::move(attr));
-        }
-    });
-}
-
 static def::Value parseDefault(lua_State* L);
 
 static def::Value parseArr(lua_State* L) {
@@ -241,8 +228,6 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
     if (auto found = tryLookup(tname, ns, ctx)){
         return found;
     }
-    lua_getfield(L, -1, "__attrs__");
-    populateAttrs(L, ctx.ast.attrs);
     if (sub == "builtin") {
         throw Err("Unhandled builtin type: {}", tname);
     } else if (sub == "alias") {
