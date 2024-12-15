@@ -239,9 +239,7 @@ JsonView parseObject(unsigned count, State& state, Arena& alloc, unsigned int de
         _CHECK(value);
         size = SortedInsertJson(obj, size, {key.GetStringUnsafe(), value}, count);
     }
-    Data result{t_object, {}, size, {}};
-    result.d.object = obj;
-    return JsonView(result);
+    return JsonView(obj, size, JsonView::sorted_tag{});
 } catch(...) {
     return ErrOOM;
 }

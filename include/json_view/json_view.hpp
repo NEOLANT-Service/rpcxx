@@ -813,12 +813,20 @@ void FromJson(std::pair<T, U>& out, JsonView json, TraceFrame const& frame) {
 
 struct StorageRequirements {
     unsigned objects;
-    unsigned arrays;
 };
 
 template<typename T>
 constexpr void ComputeStaticStorage(StorageRequirements& out) {
-
+    describe::Get<T>::for_each([&](auto f){
+        if constexpr (f.is_field) {
+            using F = decltype(f);
+            using FT = typename F::type;
+            out.objects += 1;
+            if constexpr (describe::is_described_struct_v<FT>) {
+                ComputeStaticStorage<FT>(out);
+            }
+        }
+    });
 }
 
 template<typename T>
@@ -828,32 +836,52 @@ constexpr StorageRequirements ComputeStaticStorage() {
     return res;
 }
 
-template<typename T, typename = std::enable_if_t<describe::is_described_struct_v<T>>>
-struct StaticJsonView {
-    StaticJsonView(T const& obj = {}) {
-        unsigned idx = 0;
-        NullArena null;
+namespace detail
+{
+
+template<typename T>
+JsonView staticView(T const& obj, JsonPair* storage, unsigned& consumed) {
+    (void)consumed;
+    if constexpr (describe::is_described_struct_v<T>) {
+        constexpr auto total = describe::fields_count<T>();
+        unsigned count = 0;
+        unsigned current_consumed = 0;
         describe::Get<T>::for_each([&](auto f){
             if constexpr (f.is_field) {
-                auto& field = f.get(obj);
-                auto& curr = storage[idx++];
+                using F = decltype(f);
+                using FT = typename F::type;
+                auto& curr = storage[count++];
                 curr.key = f.name;
-                if constexpr (std::is_constructible_v<JsonView, decltype(field)>) {
-                    curr.value = JsonView(field);
-                } else {
-                    // TODO: recursively get needed storage to statically allocate
-                    curr.value = JsonView::From(field, null);
-                }
+                curr.value = staticView(f.get(obj), storage + total + current_consumed, current_consumed);
             }
         });
+        consumed += total + current_consumed;
+        return JsonView(storage, total);
+    } else if constexpr (std::is_constructible_v<JsonView, T>) {
+        return JsonView(obj);
+    } else {
+        NullArena null;
+        return JsonView::From(obj, null);
     }
-    static constexpr StorageRequirements StorageSize = ComputeStaticStorage<T>();
+}
+
+}
+
+template<typename T, typename = std::enable_if_t<describe::is_described_struct_v<T>>>
+struct StaticJsonView {
+    StaticJsonView() noexcept = default;
+    StaticJsonView(T const& obj) {
+        unsigned consumed = 0;
+        JsonPair* out = storage;
+        root = detail::staticView(obj, out, consumed);
+    }
     JsonView View() const noexcept {
-        return JsonView{storage, StorageSize.objects - 1, JsonView::sorted_tag{}};
+        return root;
     }
 protected:
-    JsonPair storage[StorageSize.objects + 1];
-    JsonView arr_storage[StorageSize.arrays + 1];
+    JsonView root;
+    static constexpr StorageRequirements reqs = ComputeStaticStorage<T>();
+    JsonPair storage[reqs.objects ? reqs.objects : 1];
 };
 
 namespace detail {

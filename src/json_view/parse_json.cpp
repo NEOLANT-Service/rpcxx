@@ -156,11 +156,7 @@ struct SaxHandler
     std::true_type EndObject(SizeType) {
         auto was = Pop();
         assert(was.tag == obj);
-        Data curr;
-        curr.size = was.size;
-        curr.d.object = was.object;
-        curr.type = t_object;
-        doAdd(JsonView(curr));
+        doAdd(JsonView(was.object, was.size, JsonView::sorted_tag{}));
         return {};
     }
     std::true_type Null() {
