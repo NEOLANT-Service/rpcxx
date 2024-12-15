@@ -51,7 +51,11 @@ struct RpcException : public std::exception
     }
 };
 
-DESCRIBE(RpcException, &_::code, &_::message, &_::data)
+DESCRIBE("rpcxx::RpcException", RpcException) {
+    MEMBER("code", &_::code);
+    MEMBER("message", &_::message);
+    MEMBER("data", &_::data);
+}
 
 }
 

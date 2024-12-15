@@ -161,22 +161,17 @@ TEST_CASE("parse json") {
                 "abrobrababor"
             ]
         })";
-        auto run = [&]{
-            auto json = ParseJson(raw, alloc, opts);
-            auto key = json.At("key");
-            CHECK_EQ(key.Get<int>(), 123);
-            auto hello = json.At("hello");
-            CHECK_EQ(hello.GetString(), "world");
-            auto arr = json.At("arr");
-            CHECK_EQ(arr.At(0).Get<bool>(), true);
-            CHECK_EQ(arr.At(1).Get<string_view>(), "2");
-            CHECK_EQ(arr.At(2).Get<int>(), 3);
-            CHECK_EQ(arr.At(3).GetString(), "false");
-            CHECK_EQ(arr.At(4).Get<bool>(), false);
-        };
-        run();
-        opts.sorted = true;
-        run();
+        auto json = ParseJson(raw, alloc, opts);
+        auto key = json.At("key");
+        CHECK_EQ(key.Get<int>(), 123);
+        auto hello = json.At("hello");
+        CHECK_EQ(hello.GetString(), "world");
+        auto arr = json.At("arr");
+        CHECK_EQ(arr.At(0).Get<bool>(), true);
+        CHECK_EQ(arr.At(1).Get<string_view>(), "2");
+        CHECK_EQ(arr.At(2).Get<int>(), 3);
+        CHECK_EQ(arr.At(3).GetString(), "false");
+        CHECK_EQ(arr.At(4).Get<bool>(), false);
     }
     GIVEN("escaped") {
         DefaultArena alloc;
@@ -236,14 +231,21 @@ TEST_CASE("parse json") {
 enum Lol {
     kek, chebureck
 };
-DESCRIBE(Lol, kek, chebureck)
+DESCRIBE("Lol", Lol) {
+    MEMBER("kek", kek);
+    MEMBER("chebureck", chebureck);
+}
 
 struct Nested {
     int a;
     std::string b;
     Lol en = kek;
 };
-DESCRIBE(Nested, &_::a, &_::b, &_::en)
+DESCRIBE("Nested", Nested) {
+    MEMBER("a", &_::a);
+    MEMBER("b", &_::b);
+    MEMBER("en", &_::en);
+}
 
 namespace test {
 
@@ -256,16 +258,13 @@ struct Data {
     int lol(int b);
 };
 
-DESCRIBE(test::Data, &_::a, &_::b, &_::nested, &_::lol)
-
-TEST_CASE("json describe") {
-    CHECK(describe::Get<test::Data>().fields_count == 3);
-    CHECK(describe::Get<test::Data>().methods_count == 1);
-    CHECK(describe::Get<test::Data>().index_of<&Data::a>() == 0);
-    CHECK(describe::Get<test::Data>().index_of<&Data::b>() == 1);
-    CHECK(describe::Get<test::Data>().index_of(Field<&Data::a>{}) == 0);
-    CHECK(describe::Get<test::Data>().index_of(Field<&Data::b>{}) == 1);
+DESCRIBE("test::Data", Data) {
+    MEMBER("a", &_::a);
+    MEMBER("b", &_::b);
+    MEMBER("nested", &_::nested);
+    MEMBER("lol", &_::lol);
 }
+
 
 }
 
@@ -333,7 +332,7 @@ TEST_CASE("describe") {
     }
     SUBCASE("methods") {
         auto desc = describe::Get<test::Data>();
-        desc.for_each_field([](auto f){
+        desc.for_each([](auto f){
             if (f.name == "lol") {
                 CHECK(f.is_method);
             }

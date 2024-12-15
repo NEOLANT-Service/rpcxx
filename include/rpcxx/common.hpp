@@ -59,7 +59,7 @@ enum class ErrorCode : int64_t {
     server_end = -32001, //sentinel value for server implementation-defined errors
 };
 
-DESCRIBE_ATTRS(ErrorCode, EnumAsInteger)
+DESCRIBE("rpcxx::ErrorCode", ErrorCode, EnumAsInteger) {}
 
 constexpr inline string_view PrintCode(ErrorCode code) {
     using namespace std::string_view_literals;

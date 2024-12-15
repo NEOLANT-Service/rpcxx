@@ -62,13 +62,16 @@ JsonView DumpStruct(Arena& alloc) {
         return describe::Get<T>().name;
     } else if constexpr (describe::is_described_struct_v<T>) {
         constexpr auto desc = describe::Get<T>();
-        constexpr size_t fields = desc.fields_count;
+        constexpr size_t fields = describe::fields_count<T>();
         auto result = MakeObjectOf(fields, alloc);
-        desc.for_each_field([&](auto f){
-            using f_t = typename decltype(f)::type;
-            auto& curr = result[desc.index_of(f)];
-            curr.key = f.name;
-            curr.value = DumpStruct<f_t>(alloc);
+        unsigned idx = 0;
+        desc.for_each([&](auto f) {
+            if constexpr (f.is_field) {
+                using F = typename decltype(f)::type;
+                auto& curr = result[idx++];
+                curr.key = f.name;
+                curr.value = DumpStruct<F>(alloc);
+            }
         });
         return JsonView(result, fields);
     } else if constexpr (is_optional<T>::value) {

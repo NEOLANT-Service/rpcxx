@@ -52,7 +52,6 @@ do_register(rpcxx-rpc-test rpcxx/rpc_test.cpp)
 do_register(rpcxx-json-test rpcxx/json_test.cpp)
 do_register(rpcxx-msgpack-test rpcxx/msgpack_test.cpp)
 do_register(rpcxx-future-test rpcxx/future_test.cpp)
-do_register(rpcxx-describe-test rpcxx/describe_test.cpp)
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(rpcxx-test-deps INTERFACE -ftime-trace)

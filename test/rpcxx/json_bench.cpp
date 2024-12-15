@@ -91,7 +91,12 @@ struct TestChild
     bool b;
     std::string kek;
 };
-DESCRIBE(TestChild, &_::a, &_::b, &_::kek)
+
+DESCRIBE("TestChild", TestChild) {
+    MEMBER("a", &_::a);
+    MEMBER("b", &_::b);
+    MEMBER("kek", &_::kek);
+}
 
 struct TestData
 {
@@ -100,7 +105,12 @@ struct TestData
     std::string kek;
     std::map<std::string, TestChild> children;
 };
-DESCRIBE(TestData, &_::a, &_::b, &_::kek, &_::children);
+DESCRIBE("TestData", TestData) {
+    MEMBER("a", &_::a);
+    MEMBER("b", &_::b);
+    MEMBER("kek", &_::kek);
+    MEMBER("children", &_::children);
+}
 
 static TestChild testDataPart {
     1, true, "lol"

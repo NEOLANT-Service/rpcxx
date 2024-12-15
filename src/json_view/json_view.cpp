@@ -62,10 +62,10 @@ void JsonView::throwMissmatch(Type wanted, TraceFrame const& frame) const {
     throw exc;
 }
 
-void JsonView::throwKeyError(string_view key, TraceFrame const& frame) const
+void JsonView::throwKeyError(std::string_view key, TraceFrame const& frame) const
 {
     KeyError err(frame);
-    err.missing = key;
+    err.missing = std::string{key};
     throw err;
 }
 
@@ -145,7 +145,11 @@ const char *KeyError::what() const noexcept try
     }
     msg += trace;
     msg += "key not found: "sv;
-    msg += missing;
+    if (msg.empty()) {
+        msg += std::to_string(idx);
+    } else {
+        msg += missing;
+    }
     return msg.c_str();
 } catch (...) {
     return "Json Key Error (+ OOM)";

@@ -172,25 +172,11 @@ bool jv::DeepEqual(JsonView lhs, JsonView rhs, unsigned int depth, double margin
             return false;
         if (data.size != other.size)
             return false;
-        bool bothSorted = lhs.HasFlag(f_sorted) && rhs.HasFlag(f_sorted);
-        if (meta_Unlikely(bothSorted)) {
-            for (auto i = 0u; i < data.size; ++i) {
-                if (data.d.object[i].key != other.d.object[i].key)
-                    return false;
-                if (!DeepEqual(data.d.object[i].value, other.d.object[i].value, depth, margin)) {
-                    return false;
-                }
-            }
-        } else {
-            for (auto i = 0u; i < data.size; ++i) {
-                if (auto v = rhs.FindVal(data.d.object[i].key)) {
-                    auto our = data.d.object[i].value;
-                    if (!DeepEqual(our, *v, depth, margin)) {
-                        return false;
-                    }
-                } else {
-                    return false;
-                }
+        for (auto i = 0u; i < data.size; ++i) {
+            if (data.d.object[i].key != other.d.object[i].key)
+                return false;
+            if (!DeepEqual(data.d.object[i].value, other.d.object[i].value, depth, margin)) {
+                return false;
             }
         }
         return true;
