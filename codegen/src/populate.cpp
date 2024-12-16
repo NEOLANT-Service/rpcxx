@@ -218,7 +218,19 @@ static def::Value parseDefault(lua_State* L) {
 
 static std::vector<Attr> parseAttrs(lua_State* L) {
     std::vector<Attr> res;
-    lua_pop(L, 1);
+    if (lua_type(L, -1) != LUA_TTABLE) {
+        lua_pop(L, 1); // pop table
+        throw Err("Table expected as attributes list");
+    }
+    int idx = 0;
+    while (lua_rawgeti(L, -1, ++idx) != LUA_TNIL) {
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            throw Err("Only strings supported as attribute names");
+        }
+        auto& curr = res.emplace_back();
+        curr.name = std::string{popSV(L)};
+    }
+    lua_pop(L, 2); //pop table + nil
     return res;
 }
 
@@ -237,14 +249,6 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
     }
     if (sub == "builtin") {
         throw Err("Unhandled builtin type: {}", tname);
-    } else if (sub == "attrs") {
-        WithAttrs result;
-        result.ns = ns;
-        result.name = tname;
-        result.item = resolveNext(L, ctx);
-        lua_getfield(L, -1, "__attrs__");
-        result.attributes = parseAttrs(L);
-        return registerIfNeeded(new TypeVariant{result}, ctx);
     } else if (sub == "alias") {
         Alias result;
         result.ns = ns;
@@ -298,6 +302,14 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
         result.item = resolveNext(L, ctx);
         lua_getfield(L, -1, "__value__");
         result.value = parseDefault(L);
+        return registerIfNeeded(new TypeVariant{result}, ctx);
+    } else if (sub == "attrs") {
+        WithAttrs result;
+        result.ns = ns;
+        result.name = tname;
+        result.item = resolveNext(L, ctx);
+        lua_getfield(L, -1, "__attrs__");
+        result.attributes = parseAttrs(L);
         return registerIfNeeded(new TypeVariant{result}, ctx);
     } else if (sub == "struct") {
         Struct result;

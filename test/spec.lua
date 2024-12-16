@@ -26,7 +26,7 @@ namespace "test"
 Params = struct() {
     a = string,
     b = string("123"),
-    c = int:attrs("validated", {"in_range", 5, 10}),
+    c = int:attrs("validated"), --, {"in_range", 5, 10} parametrized attrs not supported yet
 }
 
 methods() {

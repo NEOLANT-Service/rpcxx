@@ -196,6 +196,9 @@ struct Variant : public std::variant<Nil, Int, Num, String, Bool, Table, Array> 
 struct Attr {
     std::string name;
     std::vector<def::Value>* args;
+    bool operator<(Attr const& r) const noexcept {
+        return name < r.name;
+    }
     ~Attr() {
         if (args) delete args;
     }

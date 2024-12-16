@@ -53,7 +53,7 @@ local function make_attrs(t, ...)
     if t.__subtype__ == "attrs" then
         parent = t.__next__
     end
-    local res = make_type(nil, t)
+    local res = make_type(nil, parent)
     res.__subtype__ = "attrs"
     res.__attrs__ = attrs
     return res

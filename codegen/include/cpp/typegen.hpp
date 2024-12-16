@@ -25,6 +25,7 @@ SOFTWARE.
 #include "cppgen.hpp"
 #include <cassert>
 #include <fmt/ranges.h>
+#include <set>
 
 namespace rpcxx::gen::cpp::types {
 
@@ -225,9 +226,15 @@ static string formatSingleType(FormatContext& ctx, Type t)
                     fmt::arg("name", subName),
                     fmt::arg("default", getDefault(subType))
                     );
+                string fieldAttrs;
+                if (auto all = as<WithAttrs>(subType)) {
+                    for (auto& a: all->attributes) {
+                        fieldAttrs += ", " + a.name;
+                    }
+                }
                 field_names += fmt::format(
                     FMT_COMPILE("\n    MEMBER(\"{0}\", &_::{0}{1});"),
-                    subName, "");
+                    subName, fieldAttrs);
             }
             return fmt::format(
                 struct_fmt,
@@ -347,6 +354,51 @@ static void reorderMembers(Struct& t) {
     });
 }
 
+static void collectAttrs(Type t, std::set<Attr*>& out) {
+    Visit(
+        t->AsVariant(),
+        [&](Struct& s){
+            for (auto& f: s.fields) {
+                collectAttrs(f.type, out);
+            }
+        },
+        [&](WithAttrs& s){
+            for (auto& a: s.attributes) {
+                out.insert(&a);
+            }
+        },
+        [&](Enum& s){
+            // no attrs for enum yet
+        },
+        [](Builtin){},
+        [&](auto& s){
+            collectAttrs(s.item, out);
+        });
+}
+
+static void forwardDeclareAttrs(std::set<Attr*> const& attrs, string& result) {
+    if (attrs.size()) {
+        result += "\n//Attributes forward declarations: \n";
+    }
+    for (auto& a: attrs) {
+        auto pos = a->name.find_last_of('.');
+        string_view ns;
+        string_view name{a->name};
+        if (pos != string::npos) {
+            ns = ToNamespace(string_view{a->name}.substr(0, pos));
+            name = string_view{a->name}.substr(pos + 1);
+        }
+        if (ns.empty()) {
+            result += fmt::format(FMT_COMPILE("\nstruct {};"), name);
+        } else {
+            result += fmt::format(FMT_COMPILE("\nnamespace {} {{ struct {}; }}"), ns, name);
+        }
+    }
+    if (attrs.size()) {
+        result += "\n\n";
+    }
+}
+
 std::string Format(FormatContext& ctx)
 {
     auto& opts = *static_cast<CppOpts*>(ctx.opts);
@@ -354,17 +406,20 @@ std::string Format(FormatContext& ctx)
     if (!(ctx.params.targets & TargetTypes))
         return "";
     std::vector<DepPair> byDepth;
+    std::set<Attr*> attrs;
     for (auto& t: ctx.ast.types) {
         auto* asStruct = std::get_if<Struct>(&t->AsVariant());
         if (asStruct) {
             reorderMembers(*asStruct);
         }
         if (asStruct || is<Alias>(t) || is<Enum>(t)) {
+            collectAttrs(t, attrs); //remove this scan later?
             byDepth.push_back({CalcDepth(t), t});
         }
     }
     std::sort(byDepth.begin(), byDepth.end(), CompareDeps);
     string result;
+    forwardDeclareAttrs(attrs, result);
     Namespace lastns;
     string guardEnd;
     auto end_ns = [&]{
