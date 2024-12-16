@@ -41,17 +41,21 @@ constexpr auto format_source = R"EOF(
 {methods}{notifications})EOF";
 
 constexpr auto method_inline = FMT_COMPILE(R"EOF(
+    template<int=0>
     rpcxx::Future<{return_type}> {method_name}({args_with_types}millis __timeout = {timeout});)EOF");
 
 constexpr auto method_source = FMT_COMPILE(R"EOF(
+template<int>
 inline rpcxx::Future<{return_type}> {client_name}::{method_name}({args_with_types}millis __timeout) {{
     return Request{if_pack}<{return_type}>(rpcxx::Method{{"{method_name}", __timeout}}{args});
 }})EOF");
 
 constexpr auto notify_inline = FMT_COMPILE(R"EOF(
+    template<int=0>
     void {method_name}({args_with_types});)EOF");
 
 constexpr auto notify_source = FMT_COMPILE(R"EOF(
+template<int>
 inline void {client_name}::{method_name}({args_with_types}) {{
     return Notify{if_pack}("{method_name}"{args});
 }})EOF");

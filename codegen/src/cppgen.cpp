@@ -74,6 +74,9 @@ string PrintType(Type t) {
         [](WithDefault& a) -> string {
             return PrintType(a.item);
         },
+        [](WithAttrs& a) -> string {
+            return PrintType(a.item);
+        },
         [](auto& v) -> string {
             return fmt::format(FMT_COMPILE("{}::{}"), ToNamespace(v.ns.name), v.name);
         }

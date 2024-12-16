@@ -73,7 +73,10 @@ struct Test {
     string b;
 };
 
-DESCRIBE(::Test, &_::a, &_::b)
+DESCRIBE("Test", Test) {
+    MEMBER("a", &_::a);
+    MEMBER("b", &_::b);
+}
 
 template<typename T, typename...Args>
 T req(Client& cli, string_view name, Args const&...a) {

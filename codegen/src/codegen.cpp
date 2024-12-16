@@ -199,15 +199,7 @@ int main(int argc, char *argv[]) try
     };
     if (params.lang == Lang::cpp) {
         CppOpts cppOpts;
-        auto was = ctx.params.targets;
         ctx.opts = &cppOpts;
-        ctx.params.targets = Targets(was & TargetTypes);
-        writeOutput(mainOut+".private.hpp", cpp::Format(ctx));
-        ctx.params.targets = Targets(was & ~TargetTypes);
-        ctx.params.extraIncludes = {mainOut+".private.hpp"};
-        for (auto& f: ctx.ast.attrs) {
-            ctx.params.extraIncludes.push_back(f+".hpp");
-        }
         writeOutput(mainOut+".hpp", cpp::Format(ctx));
     } else if (params.lang == Lang::go) {
         GoOpts opts;

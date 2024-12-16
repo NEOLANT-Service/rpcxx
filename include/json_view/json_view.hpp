@@ -30,6 +30,7 @@ SOFTWARE.
 #include "json_view/alloc.hpp"
 #include "trace_frame.hpp"
 #include "meta/meta.hpp"
+#include <algorithm>
 #include <limits>
 #include <cmath>
 #include <string.h>
@@ -48,7 +49,7 @@ using std::string_view;
 
 //! Attributes
 
-//! Convert structs as tuples of thier fields
+//! Convert structs as tuples (arrays) of fields
 struct StructAsTuple {};
 
 struct FieldIndexBase {};
@@ -58,19 +59,18 @@ struct FieldIndex : FieldIndexBase {
     static constexpr unsigned value = idx;
 };
 //! Convert enums not into strings, but into integers
-struct EnumAsInteger {};
-//! Inherit to mark all fields as skippable
-struct SkipMissing : describe::Attrs<SkipMissing> {};
-//! Mark field as required (it is by default)
-struct Required {};
-//! Subclass will be used as a validator for fields
-struct FieldValidator {static void validate(...) = delete;};
-//! Subclass will be used as a validator for classes
-struct ClassValidator {static void validate(...) = delete;};
-//! Helper for shorter code. Can be inherited or used as an attr. Will call T::validate(U)
+struct EnumAsInteger {
+    static constexpr bool validate = false;
+};
+//! Convert enums not into strings, but into integers (validate fits)
+struct EnumAsIntegerValidate : EnumAsInteger {
+    static constexpr bool validate = true;
+};
+
+struct Validator {static void validate(...) = delete;};
+
 template<typename T>
-struct ValidatedWith : FieldValidator, ClassValidator {
-    using GetAttrs = describe::Attrs<ValidatedWith<T>>;
+struct ValidatedWith : Validator {
     template<typename U> static void validate(U& val) { T::validate(val); }
 };
 struct EnumFallbackBase {};
@@ -97,6 +97,7 @@ template<typename T, typename = void> struct Convert;
 
 struct JsonView
 {
+    struct sorted_tag {};
     using value_type = JsonView;
     JsonView(Data d) noexcept : data(d) {}
     JsonView(std::nullptr_t = {}) noexcept {
@@ -144,15 +145,23 @@ struct JsonView
     JsonView(const JsonView(&arr)[size]) noexcept :
         JsonView(arr, size)
     {}
-    explicit JsonView(const JsonPair* object, unsigned size) noexcept {
+
+    explicit JsonView(JsonPair* object, unsigned size) noexcept;
+    explicit JsonView(const JsonPair* object, unsigned size, sorted_tag) noexcept {
         data.size = size;
         data.d.object = object;
         data.type = t_object;
     }
+
     template<unsigned size>
-    JsonView(const JsonPair(&obj)[size]) noexcept :
+    JsonView(JsonPair(&obj)[size]) noexcept :
         JsonView(obj, size)
     {}
+    template<unsigned size>
+    JsonView(const JsonPair(&obj)[size], sorted_tag) noexcept :
+        JsonView(obj, size, sorted_tag{})
+    {}
+
     static JsonView Custom(void* data, unsigned size = 0) noexcept {
         Data res;
         res.size = size;
@@ -289,8 +298,20 @@ inline JsonView EmptyArray() {
 }
 
 struct JsonPair {
-    string_view key;
+    std::string_view key;
     JsonView value;
+};
+
+struct KeyLess {
+    bool operator()(const JsonPair& lhs, const JsonPair& rhs) const noexcept {
+        return lhs.key < rhs.key;
+    }
+};
+
+struct KeyEq {
+    bool operator()(const JsonPair& lhs, const JsonPair& rhs) const noexcept {
+        return lhs.key == rhs.key;
+    }
 };
 
 struct JsonView::AsObj {
@@ -327,6 +348,15 @@ protected:
     JsonView j;
 };
 
+inline JsonView::JsonView(JsonPair *object, unsigned int size) noexcept {
+    std::sort(object, object + size, KeyLess{});
+    auto newEnd = std::unique(object, object + size, KeyEq{});
+    auto newSize = unsigned(newEnd - object);
+    data.size = newSize;
+    data.d.object = object;
+    data.type = t_object;
+}
+
 inline typename JsonView::AsObj JsonView::Object(bool check) const {
     return {*this, check};
 }
@@ -342,7 +372,7 @@ inline std::string_view CopyString(std::string_view src, Arena& alloc) {
     if (meta_Unlikely(!ptr)) {
         throw std::bad_alloc{};
     }
-    memcpy(ptr, src.data(), src.size());
+    ::memcpy(ptr, src.data(), src.size());
     return {static_cast<const char*>(ptr), src.size()};
 }
 
@@ -367,6 +397,7 @@ inline JsonPair* MakeObjectOf(unsigned count, Arena& alloc) {
 }
 
 namespace detail {
+
 inline const JsonPair* sortedFind(const JsonPair* object, unsigned len, string_view key) {
     auto first = object;
     while (len > 0) {
@@ -389,16 +420,7 @@ inline const JsonPair* sortedFind(const JsonPair* object, unsigned len, string_v
 
 inline const JsonPair* JsonView::Find(string_view key, TraceFrame const& frame) const {
     AssertType(t_object, frame);
-    if (HasFlag(f_sorted)) {
-        return detail::sortedFind(data.d.object, data.size, key);
-    } else {
-        for (auto i = 0u; i < data.size; ++i) {
-            if (data.d.object[i].key == key) {
-                return data.d.object + i;
-            }
-        }
-    }
-    return nullptr;
+    return detail::sortedFind(data.d.object, data.size, key);
 }
 
 inline const JsonView* JsonView::FindVal(string_view key, TraceFrame const& frame) const {
@@ -416,18 +438,6 @@ inline const JsonView JsonView::At(string_view key, TraceFrame const& frame) con
         throwKeyError(key, frame);
     }
 }
-
-struct KeyLess {
-    bool operator()(const JsonPair& lhs, const JsonPair& rhs) const noexcept {
-        return lhs.key < rhs.key;
-    }
-};
-
-struct KeyEq {
-    bool operator()(const JsonPair& lhs, const JsonPair& rhs) const noexcept {
-        return lhs.key == rhs.key;
-    }
-};
 
 inline string_view JsonView::GetTypeName() const noexcept {
     return PrintType(data.type);
@@ -526,6 +536,11 @@ struct IntRangeError : JsonException
     const char* what() const noexcept override;
 };
 
+template<typename T>
+struct is_optional : std::false_type {};
+template<typename T>
+struct is_optional<std::optional<T>> : std::true_type {};
+
 namespace detail {
 
 template<typename From, typename To>
@@ -537,85 +552,157 @@ struct is_lossless {
 template<typename To, typename FromT>
 To intChecked(JsonView j, FromT our, TraceFrame const& frame) noexcept(is_lossless<FromT, To>::value);
 
+template<typename T> void deserializeFields(T& obj, JsonView json, TraceFrame const& frame);
+template<typename T> void deserializeFromTuple(T& obj, JsonView json, TraceFrame const& frame);
+template<typename T> JsonView serializeAsTuple(T const& value, Arena& alloc);
+template<typename Validator, typename T> void runValidator(T& output, TraceFrame const& next);
+
 } //detail
 
 /// Conversions
-template<typename T, typename> struct Convert {
+template<typename T, typename>
+struct Convert
+{
     static JsonView DoIntoJson(T const& value, Arena& ctx) {
-        return IntoJson(value, ctx);
+        constexpr bool trivial = std::is_arithmetic_v<T>
+                                 || std::is_same_v<T, JsonView>
+                                 || std::is_integral_v<T>
+                                 || std::is_convertible_v<T, string_view>;
+        if constexpr (trivial) {
+            (void)ctx;
+            return JsonView{value};
+        } else if constexpr(describe::is_described_struct_v<T>) {
+            if constexpr (describe::has_v<StructAsTuple, T>) {
+                return detail::serializeAsTuple(value, ctx);
+            } else {
+                constexpr auto desc = describe::Get<T>();
+                constexpr auto size = describe::fields_count<T>();
+                auto obj = MakeObjectOf(size, ctx);
+                unsigned count = 0;
+                desc.for_each([&](auto f) {
+                    if constexpr (f.is_field) {
+                        auto entry = JsonPair{f.name, JsonView::From(f.get(value), ctx)};
+                        count = SortedInsertJson(obj, count, entry, size);
+                    }
+                });
+                Data result;
+                result.type = t_object;
+                result.size = count;
+                result.d.object = obj;
+                return JsonView(result);
+            }
+        } else if constexpr(describe::is_described_enum_v<T>) {
+            if constexpr (describe::has_v<EnumAsInteger, T>) {
+                return JsonView(std::underlying_type_t<T>(value));
+            } else {
+                string_view name;
+                using fallback = describe::extract_t<EnumFallbackBase, T>;
+                if (!describe::enum_to_name(value, name)) {
+                    if constexpr (std::is_void_v<fallback>) {
+                        throw std::runtime_error(
+                            "invalid enum value for '" + std::string{describe::Get<T>().name}
+                            + "': "+std::to_string(std::underlying_type_t<T>(value)));
+                    } else {
+                        (void)describe::enum_to_name(T(fallback::value), name);
+                    }
+                }
+                return name;
+            }
+        } else {
+            return IntoJson(value, ctx);
+        }
     }
-    static void DoFromJson(T& out, JsonView json, TraceFrame const& frame) {
-        FromJson(out, json, frame);
+    static void DoFromJson(T& value, JsonView json, TraceFrame const& frame) {
+        if constexpr (std::is_same_v<T, JsonView>) {
+            value = json; (void)frame;
+        } else if constexpr (std::is_same_v<T, bool>) {
+            json.AssertType(t_boolean, frame);
+            value = json.GetUnsafe().d.boolean;
+        } else if constexpr (std::is_arithmetic_v<T>) {
+            if constexpr (std::is_floating_point_v<T>) {
+                switch(json.GetType()) {
+                case t_signed: {
+                    value = static_cast<T>(json.GetUnsafe().d.integer);
+                    break;
+                }
+                case t_unsigned: {
+                    value = static_cast<T>(json.GetUnsafe().d.uinteger);
+                    break;
+                }
+                case t_number: {
+                    value = static_cast<T>(json.GetUnsafe().d.number);
+                    break;
+                }
+                default: {
+                    json.throwMissmatch(t_any_number, frame);
+                }
+                }
+            } else {
+                switch(json.GetType()) {
+                case t_signed: {
+                    value = detail::intChecked<T>(json, json.GetUnsafe().d.integer, frame);
+                    break;
+                }
+                case t_unsigned: {
+                    value = detail::intChecked<T>(json, json.GetUnsafe().d.uinteger, frame);
+                    break;
+                }
+                default: {
+                    json.throwMissmatch(t_any_integer, frame);
+                }
+                }
+            }
+        } else if constexpr (std::is_convertible_v<T, std::string_view>) {
+            json.AssertType(t_string, frame);
+            value = static_cast<std::decay_t<T>>(json.GetStringUnsafe());
+        } else if constexpr (describe::is_described_struct_v<T>) {
+            if constexpr (describe::has_v<StructAsTuple, T>) {
+                json.AssertType(t_array, frame);
+                detail::deserializeFromTuple(value, json, frame);
+            } else {
+                json.AssertType(t_object, frame);
+                detail::deserializeFields(value, json, frame);
+            }
+            using validator = describe::extract_t<Validator, T>;
+            detail::runValidator<validator>(value, TraceFrame(describe::Get<T>().name, frame));
+        } else if constexpr (describe::is_described_enum_v<T>) {
+            using as_int = describe::extract_t<EnumAsInteger, T>;
+            if constexpr (!std::is_void_v<as_int>) {
+                auto asUnder = json.Get<std::underlying_type_t<T>>(frame);
+                if constexpr (as_int::validate) {
+                    bool ok = false;
+                    describe::Get<T>().for_each([&](auto f){
+                        if constexpr (f.is_field) {
+                            if (!ok && asUnder == f.value) {
+                                ok = true;
+                            }
+                        }
+                    });
+                    if (!ok) {
+                        auto msg = "invalid integer for enum '"+std::string{describe::Get<T>().name} +"': "+std::to_string(asUnder);
+                        throw ForeignError(std::move(msg), frame);
+                    }
+                }
+                value = T(asUnder);
+            } else {
+                auto name = json.Get<string_view>(frame);
+                using fallback = describe::extract_t<EnumFallbackBase, T>;
+                if (!describe::name_to_enum(name, value)) {
+                    if constexpr (std::is_void_v<fallback>) {
+                        auto msg = "invalid string for enum '"
+                                   + std::string{describe::Get<T>().name}
+                                   + "': " + std::string{name};
+                        throw ForeignError(std::move(msg), frame);
+                    } else {
+                        value = fallback::value;
+                    }
+                }
+            }
+        } else {
+            FromJson(value, json, frame);
+        }
     }
 };
-
-inline JsonView IntoJson(bool value, Arena&) {
-    return JsonView{value};
-}
-
-inline void FromJson(bool& value, JsonView json, TraceFrame const& frame) {
-    json.AssertType(t_boolean, frame);
-    value = json.GetUnsafe().d.boolean;
-}
-
-template<typename T, typename Alloc, if_integral<T> = 1>
-JsonView IntoJson(T value, Alloc&) {
-    return JsonView{value};
-}
-
-template<typename T, if_integral<T> = 1>
-void FromJson(T& value, JsonView json, TraceFrame const& frame) {
-    switch(json.GetType()) {
-    case t_signed: {
-        value = detail::intChecked<T>(json, json.GetUnsafe().d.integer, frame);
-        break;
-    }
-    case t_unsigned: {
-        value = detail::intChecked<T>(json, json.GetUnsafe().d.uinteger, frame);
-        break;
-    }
-    default: {
-        json.throwMissmatch(t_signed | t_unsigned, frame);
-    }
-    }
-}
-
-template<typename T, if_floating_point<T> = 1>
-JsonView IntoJson(T value, Arena&) {
-    return JsonView{value};
-}
-
-template<typename T, if_floating_point<T> = 1>
-void FromJson(T& value, JsonView json, TraceFrame const& frame) {
-    switch(json.GetType()) {
-    case t_signed: {
-        value = static_cast<T>(json.GetUnsafe().d.integer);
-        break;
-    }
-    case t_unsigned: {
-        value = static_cast<T>(json.GetUnsafe().d.uinteger);
-        break;
-    }
-    case t_number: {
-        value = static_cast<T>(json.GetUnsafe().d.number);
-        break;
-    }
-    default: {
-        json.throwMissmatch(t_signed | t_unsigned | t_number, frame);
-    }
-    }
-}
-
-template<typename T, if_string_like<T> = 1>
-JsonView IntoJson(T const& value, Arena&) {
-    return JsonView{value};
-}
-
-template<typename T, if_string_like<T> = 1>
-void FromJson(T& value, JsonView json, TraceFrame const& frame) {
-    json.AssertType(t_string, frame);
-    value = static_cast<std::decay_t<T>>(json.GetStringUnsafe());
-}
 
 namespace detail {
 
@@ -631,147 +718,36 @@ void impl_from(const JsonView* source, Tuple& out, TraceFrame const& frame, std:
 }
 
 template<typename...Ts>
-JsonView IntoJson(std::tuple<Ts...> const& value, Arena& ctx) {
-    constexpr unsigned count = sizeof...(Ts);
-    auto arr = static_cast<JsonView*>(ctx(sizeof(JsonView) * count));
-    detail::impl_into(arr, value, ctx, std::make_index_sequence<count>());
-    return JsonView{arr, count};
-}
-
-template<typename...Ts>
-void FromJson(std::tuple<Ts...>& value, JsonView json, TraceFrame const& frame) {
-    constexpr unsigned count = sizeof...(Ts);
-    json.AssertType(t_array, frame);
-    if (json.GetUnsafe().size <= count) {
-        json.throwIndexError(count, frame);
+struct Convert<std::tuple<Ts...>>
+{
+    static JsonView DoIntoJson(std::tuple<Ts...> const& value, Arena& ctx) {
+        constexpr unsigned count = sizeof...(Ts);
+        auto arr = static_cast<JsonView*>(ctx(sizeof(JsonView) * count));
+        detail::impl_into(arr, value, ctx, std::make_index_sequence<count>());
+        return JsonView{arr, count};
     }
-    detail::impl_from(json.GetUnsafe().d.array, value, frame, std::make_index_sequence<count>());
-}
-
-template<typename T>
-JsonView IntoJson(std::optional<T> const& value, Arena& ctx) {
-    return value ? JsonView::From(*value, ctx) : JsonView(nullptr);
-}
-
-template<typename T>
-void FromJson(std::optional<T>& out, JsonView json, TraceFrame const& frame) {
-    if (json.Is(t_null)) {
-        out.reset();
-    } else {
-        json.GetTo(out.emplace(), frame);
-    }
-}
-
-template<typename T>
-struct is_optional : std::false_type {};
-template<typename T>
-struct is_optional<std::optional<T>> : std::true_type {};
-
-namespace detail {
-template<typename T> void deserializeFieldsSorted(T& obj, JsonView json, TraceFrame const& frame);
-template<typename T> void deserializeFields(T& obj, JsonView json, TraceFrame const& frame);
-template<typename T> void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame);
-template<typename T> JsonView serializeAsTuple(T const& value, Arena& alloc);
-template<typename Validator, typename T> void runValidator(T& output, TraceFrame const& next);
-}
-
-template<typename T, if_struct<T> = 1>
-void FromJson(T& out, JsonView json, TraceFrame const& frame) {
-    if constexpr (describe::has_attr_v<StructAsTuple, T>) {
+    static void DoFromJson(std::tuple<Ts...>& value, JsonView json, TraceFrame const& frame) {
+        constexpr unsigned count = sizeof...(Ts);
         json.AssertType(t_array, frame);
-        detail::deserializeAsTuple(out, json, frame);
-    } else if (json.HasFlag(f_sorted)) {
-        json.AssertType(t_object, frame);
-        detail::deserializeFieldsSorted(out, json, frame);
-    } else {
-        json.AssertType(t_object, frame);
-        detail::deserializeFields(out, json, frame);
-    }
-    using validator = describe::extract_attr_t<ClassValidator, T>;
-    detail::runValidator<validator>(out, TraceFrame(describe::Get<T>().name, frame));
-}
-
-template<typename T, if_struct<T> = 1>
-JsonView IntoJson(T const& value, Arena& ctx) {
-    if constexpr (describe::has_attr_v<StructAsTuple, T>) {
-        return detail::serializeAsTuple(value, ctx);
-    } else {
-        constexpr auto desc = describe::Get<T>();
-        constexpr auto size = desc.fields_count;
-        auto obj = MakeObjectOf(size, ctx);
-        unsigned count = 0;
-        desc.for_each_field([&](auto field){
-            auto entry = JsonPair{field.name, JsonView::From(field.get(value), ctx)};
-            count = SortedInsertJson(obj, count, entry, size);
-        });
-        Data result;
-        result.type = t_object;
-        result.size = count;
-        result.d.object = obj;
-        result.flags = f_sorted;
-        return JsonView(result);
-    }
-}
-
-template<typename T, if_enum<T> = 1>
-JsonView IntoJson(T const& value, Arena&) {
-    if constexpr (describe::has_attr_v<EnumAsInteger, T>) {
-        return JsonView(std::underlying_type_t<T>(value));
-    } else {
-        string_view name;
-        using fallback = describe::extract_attr_t<EnumFallbackBase, T>;
-        if (!describe::enum_to_name(value, name)) {
-            if constexpr (std::is_void_v<fallback>) {
-                throw std::runtime_error(
-                    "invalid enum value for '" + std::string{describe::Get<T>().name}
-                    + "': "+std::to_string(std::underlying_type_t<T>(value)));
-            } else {
-                (void)describe::enum_to_name(T(fallback::value), name);
-            }
+        if (json.GetUnsafe().size <= count) {
+            json.throwIndexError(count, frame);
         }
-        return name;
+        detail::impl_from(json.GetUnsafe().d.array, value, frame, std::make_index_sequence<count>());
     }
-}
+};
 
-template<typename T, if_enum<T> = 1>
-void FromJson(T& out, JsonView json, TraceFrame const& frame) {
-    if constexpr (describe::has_attr_v<EnumAsInteger, T>) {
-        auto asUnder = json.Get<std::underlying_type_t<T>>(frame);
-        // maybe later: if validate integer attr 
-        // even later: consider fallback is integer validation fails
-        //bool ok = false;
-        //describe::Get<T>().for_each_field([&](auto f){
-        //    if (!ok && asUnder == f.value) {
-        //        ok = true;
-        //    }
-        //});
-        //if (!ok) {
-        //    auto msg = "invalid integer for enum '"+std::string{describe::Get<T>().name} +"': "+std::to_string(asUnder);
-        //    throw ForeignError(std::move(msg), frame);
-        //}
-        out = T(asUnder);
-    } else {
-        auto name = json.Get<string_view>(frame);
-        using fallback = describe::extract_attr_t<EnumFallbackBase, T>;
-        if (!describe::name_to_enum(name, out)) {
-            if constexpr (std::is_void_v<fallback>) {
-                auto msg = "invalid string for enum '"
-                           + std::string{describe::Get<T>().name}
-                           + "': " + std::string{name};
-                throw ForeignError(std::move(msg), frame);
-            } else {
-                out = fallback::value;
-            }
+template<typename T>
+struct Convert<std::optional<T>>
+{
+    static JsonView DoIntoJson(std::optional<T> const& value, Arena& ctx) {
+        return value ? JsonView::From(*value, ctx) : JsonView(nullptr);
+    }
+    static void DoFromJson(std::optional<T>& value, JsonView json, TraceFrame const& frame) {
+        if (json.Is(t_null)) {
+            value.reset();
+        } else {
+            json.GetTo(value.emplace(), frame);
         }
-    }
-}
-
-template<> struct Convert<JsonView> {
-    static JsonView DoIntoJson(JsonView value, Arena&) {
-        return value;
-    }
-    static void DoFromJson(JsonView& out, JsonView json, TraceFrame const&) {
-        out = json;
     }
 };
 
@@ -834,29 +810,78 @@ void FromJson(std::pair<T, U>& out, JsonView json, TraceFrame const& frame) {
     json.GetUnsafe().d.array[1].GetTo(out.second, TraceFrame(1, frame));
 }
 
-template<typename T, typename = std::enable_if_t<describe::is_described_struct_v<T>>>
-struct StaticJsonView {
-    StaticJsonView(T const& obj = {}) {
-        unsigned idx = 0;
-        NullArena null;
-        desc.for_each_field([&](auto f){
-            auto& field = f.get(obj);
-            auto& curr = storage[idx++];
-            curr.key = f.name;
-            if constexpr (std::is_constructible_v<JsonView, decltype(field)>) {
-                curr.value = JsonView(field);
-            } else {
-                // TODO: recursively get needed storage to statically allocate
-                curr.value = JsonView::From(field, null);
+struct StorageRequirements {
+    unsigned objects;
+};
+
+template<typename T>
+constexpr void ComputeStaticStorage(StorageRequirements& out) {
+    describe::Get<T>::for_each([&](auto f){
+        if constexpr (f.is_field) {
+            using F = decltype(f);
+            using FT = typename F::type;
+            out.objects += 1;
+            if constexpr (describe::is_described_struct_v<FT>) {
+                ComputeStaticStorage<FT>(out);
+            }
+        }
+    });
+}
+
+template<typename T>
+constexpr StorageRequirements ComputeStaticStorage() {
+    StorageRequirements res{};
+    ComputeStaticStorage<T>(res);
+    return res;
+}
+
+namespace detail
+{
+
+template<typename T>
+JsonView staticView(T const& obj, JsonPair* storage, unsigned& consumed) {
+    (void)consumed;
+    if constexpr (describe::is_described_struct_v<T>) {
+        constexpr auto total = describe::fields_count<T>();
+        unsigned count = 0;
+        unsigned current_consumed = 0;
+        describe::Get<T>::for_each([&](auto f){
+            if constexpr (f.is_field) {
+                using F = decltype(f);
+                using FT = typename F::type;
+                auto& curr = storage[count++];
+                curr.key = f.name;
+                curr.value = staticView(f.get(obj), storage + total + current_consumed, current_consumed);
             }
         });
+        consumed += total + current_consumed;
+        return JsonView(storage, total);
+    } else if constexpr (std::is_constructible_v<JsonView, T>) {
+        return JsonView(obj);
+    } else {
+        NullArena null;
+        return JsonView::From(obj, null);
     }
+}
+
+}
+
+template<typename T, typename = std::enable_if_t<describe::is_described_struct_v<T>>>
+struct StaticJsonView {
+    StaticJsonView() noexcept = default;
+    void Setup(T const& obj) {
+        unsigned consumed = 0;
+        JsonPair* out = storage;
+        root = detail::staticView(obj, out, consumed);
+    }
+    StaticJsonView(StaticJsonView&&) = delete;
     JsonView View() const noexcept {
-        return {storage};
+        return root;
     }
 protected:
-    static constexpr auto desc = describe::Get<T>();
-    JsonPair storage[desc.fields_count];
+    JsonView root;
+    static constexpr StorageRequirements reqs = ComputeStaticStorage<T>();
+    JsonPair storage[reqs.objects ? reqs.objects : 1];
 };
 
 namespace detail {
@@ -868,11 +893,7 @@ struct fieldHelper {
 
 template<typename F>
 constexpr bool isRequired() {
-    constexpr bool isRequired = describe::has_attr_v<Required, F>;
-    constexpr bool skip = describe::has_attr_v<SkipMissing, typename F::cls>
-                          || describe::has_attr_v<SkipMissing, F>
-                          || is_optional<typename F::type>::value;
-    return isRequired || !skip;
+    return !is_optional<typename F::type>::value;
 }
 
 template<typename Cls>
@@ -917,14 +938,14 @@ inline JsonView tupleGet(bool required, unsigned idx, const JsonView* arr, unsig
 }
 
 template<typename T>
-void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame) {
+void deserializeFromTuple(T& obj, JsonView json, TraceFrame const& frame) {
     constexpr auto desc = describe::Get<T>();
     unsigned count = 0;
     auto arr = json.GetUnsafe().d.array;
     auto sz = json.GetUnsafe().size;
     desc.for_each_field([&](auto f){
         using F = decltype(f);
-        using Idx = describe::extract_attr_t<FieldIndexBase, F>;
+        using Idx = describe::extract_t<FieldIndexBase, F>;
         unsigned index;
         if constexpr (!std::is_void_v<Idx>) index = Idx::value;
         else index = count;
@@ -932,7 +953,7 @@ void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame) {
         auto src = tupleGet(isRequired<F>(), index, arr, sz, frame);
         TraceFrame fieldFrame(f.name, frame);
         src.GetTo(output, fieldFrame);
-        using validator = describe::extract_attr_t<FieldValidator, F>;
+        using validator = describe::extract_t<Validator, F>;
         runValidator<validator>(output, fieldFrame);
         count++;
     });
@@ -940,7 +961,7 @@ void deserializeAsTuple(T& obj, JsonView json, TraceFrame const& frame) {
 
 template<typename Field>
 constexpr unsigned getIdxFor() {
-    using Explicit = describe::extract_attr_t<FieldIndexBase, Field>;
+    using Explicit = describe::extract_t<FieldIndexBase, Field>;
     if constexpr (std::is_void_v<Explicit>) {
         return 0;
     } else {
@@ -948,81 +969,67 @@ constexpr unsigned getIdxFor() {
     }
 }
 
-template<typename T, typename P, typename...Fields>
-constexpr unsigned maxIdxFor(describe::Description<T, P, Fields...>) {
-    constexpr auto simple = sizeof...(Fields);
-    constexpr std::array fromAttr{getIdxFor<Fields>()...};
-    for (auto i: fromAttr) {
-        if (i > simple) {
-            return i;
+template<typename T>
+constexpr unsigned maxIdxFor() {
+    unsigned result = describe::fields_count<T>();
+    describe::Get<T>::for_each([&](auto f){
+        if constexpr (f.is_field) {
+            using F = decltype(f);
+            using Explicit = describe::extract_t<FieldIndexBase, F>;
+            if constexpr (!std::is_void_v<Explicit>) {
+                if (Explicit::value > result) {
+                    result = Explicit::value;
+                }
+            }
         }
-    }
-    return simple;
+    });
+    return result;
 }
 
 template<typename T>
 JsonView serializeAsTuple(const T &value, Arena &alloc)
 {
     constexpr auto desc = describe::Get<T>();
-    constexpr auto total = maxIdxFor(desc);
+    constexpr auto total = maxIdxFor<T>();
     auto arr = MakeArrayOf(total, alloc);
     unsigned count = 0;
-    desc.for_each_field([&](auto f){
-        using F = decltype(f);
-        constexpr auto manual = getIdxFor<F>();
-        auto idx = manual ? manual : count;
-        arr[idx] = JsonView::From(f.get(value), alloc);
-        count++;
+    desc.for_each([&](auto f){
+        if constexpr (f.is_field) {
+            using F = decltype(f);
+            constexpr auto manual = getIdxFor<F>();
+            auto idx = manual ? manual : count;
+            arr[idx] = JsonView::From(f.get(value), alloc);
+            count++;
+        }
     });
     return JsonView(arr, total);
 }
 
+
 template<typename T>
 void deserializeFields(T& obj, JsonView json, TraceFrame const& frame) {
     constexpr auto desc = describe::Get<T>();
-    constexpr auto helpers = prepFields<T>();
-    auto thisRun = helpers;
-    for (auto pair: json.Object()) {
-        unsigned count = 0;
-        desc.for_each_field([&](auto field){
-            if (pair.key == field.name) {
-                thisRun[count++].hit = true;
-                auto& output = field.get(obj);
-                TraceFrame next(field.name, frame);
-                pair.value.GetTo(output, next);
-                using validator = describe::extract_attr_t<FieldValidator, decltype(field)>;
-                runValidator<validator>(output, next);
+    desc.for_each([&](auto field){
+        if constexpr (field.is_field) {
+            using F = decltype(field);
+            auto& output = field.get(obj);
+            auto next = TraceFrame(field.name, frame);
+            if constexpr (isRequired<F>()) {
+                json.At(field.name, frame).GetTo(output, next);
+            } else {
+                if (auto f = json.FindVal(field.name, frame)) {
+                    f->GetTo(output, next);
+                }
             }
-        });
-    }
-    for (auto& field: thisRun) {
-        if (field.required && !field.hit) {
-            json.throwKeyError(field.name, frame);
+            using validator = describe::extract_t<Validator, F>;
+            runValidator<validator>(output, next);
         }
-    }
-}
-
-template<typename T>
-void deserializeFieldsSorted(T& obj, JsonView json, TraceFrame const& frame) {
-    constexpr auto desc = describe::Get<T>();
-    desc.for_each_field([&](auto field){
-        using F = decltype(field);
-        auto& output = field.get(obj);
-        auto next = TraceFrame(field.name, frame);
-        if constexpr (isRequired<F>()) {
-            json.At(field.name, frame).GetTo(output, next);
-        } else {
-            if (auto f = json.FindVal(field.name, frame)) {
-                f->GetTo(output, next);
-            }
-        }
-        using validator = describe::extract_attr_t<FieldValidator, F>;
-        runValidator<validator>(output, next);
     });
 }
 
 template<typename To, typename FromT>
-inline To intChecked(JsonView j, FromT our, TraceFrame const& frame) noexcept(is_lossless<FromT, To>::value)
+inline To intChecked(JsonView j, FromT our, TraceFrame const& frame)
+    noexcept(is_lossless<FromT, To>::value)
 {
     (void)j;
     using is_lossless = is_lossless<FromT, To>;

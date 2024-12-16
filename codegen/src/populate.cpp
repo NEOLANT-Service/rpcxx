@@ -57,9 +57,10 @@ static void iterateTable(lua_State* L, Fn&& f) {
         }
         auto now = lua_gettop(L);
         if (was != now) {
-            throw Err("After calling an iterator function =>"
+            fmt::println(stderr, "After calling an iterator function =>"
                       " stack is not of the same size (was: {} != now: {})",
                       was, now);
+            std::abort();
         }
         if (!contin) {
             lua_pop(L, 2);
@@ -146,19 +147,6 @@ static Type tryLookup(string_view name, Namespace& ns, FormatContext& ctx) {
     return t->second;
 }
 
-static void populateAttrs(lua_State* L, vector<string>& attrs) {
-    if (lua_type(L, -1) != LUA_TTABLE) {
-        lua_pop(L, 1);
-        return;
-    }
-    iterateTableConsume(L, [&]{
-        auto attr = string{getSV(L)};
-        if (std::find(attrs.begin(), attrs.end(), attr) == attrs.end()) {
-            attrs.push_back(std::move(attr));
-        }
-    });
-}
-
 static def::Value parseDefault(lua_State* L);
 
 static def::Value parseArr(lua_State* L) {
@@ -228,6 +216,24 @@ static def::Value parseDefault(lua_State* L) {
     return nullptr;
 }
 
+static std::vector<Attr> parseAttrs(lua_State* L) {
+    std::vector<Attr> res;
+    if (lua_type(L, -1) != LUA_TTABLE) {
+        lua_pop(L, 1); // pop table
+        throw Err("Table expected as attributes list");
+    }
+    int idx = 0;
+    while (lua_rawgeti(L, -1, ++idx) != LUA_TNIL) {
+        if (lua_type(L, -1) != LUA_TSTRING) {
+            throw Err("Only strings supported as attribute names");
+        }
+        auto& curr = res.emplace_back();
+        curr.name = std::string{popSV(L)};
+    }
+    lua_pop(L, 2); //pop table + nil
+    return res;
+}
+
 static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try {
     if (!test(L, "__is_type__")) {
         throw Err("Type expected: {}", tname);
@@ -241,8 +247,6 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
     if (auto found = tryLookup(tname, ns, ctx)){
         return found;
     }
-    lua_getfield(L, -1, "__attrs__");
-    populateAttrs(L, ctx.ast.attrs);
     if (sub == "builtin") {
         throw Err("Unhandled builtin type: {}", tname);
     } else if (sub == "alias") {
@@ -299,6 +303,14 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
         lua_getfield(L, -1, "__value__");
         result.value = parseDefault(L);
         return registerIfNeeded(new TypeVariant{result}, ctx);
+    } else if (sub == "attrs") {
+        WithAttrs result;
+        result.ns = ns;
+        result.name = tname;
+        result.item = resolveNext(L, ctx);
+        lua_getfield(L, -1, "__attrs__");
+        result.attributes = parseAttrs(L);
+        return registerIfNeeded(new TypeVariant{result}, ctx);
     } else if (sub == "struct") {
         Struct result;
         result.ns = ns;
@@ -308,7 +320,12 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
             auto subname = getSV(L, -2);
             lua_getfield(L, -1, "__name__");
             auto subtname = popSV(L);
-            auto found = resolveType(L, subtname, ctx);
+            Type found;
+            try {
+                found = resolveType(L, subtname, ctx);
+            } catch (std::exception& e) {
+                throw Err("{}\n =>\tWhile resolving for struct field: '{}'", e.what(), subname);
+            }
             if (!found) {
                 throw Err("Error resolving: {}.{}", tname, subname);
             }

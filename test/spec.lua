@@ -1,4 +1,4 @@
-// This file is a part of RPCXX project
+--[[// This file is a part of RPCXX project
 
 /*
 Copyright 2024 "NEOLANT Service", "NEOLANT Kalinigrad", Alexey Doronin, Anastasia Lugovets, Dmitriy Dyakonov
@@ -20,43 +20,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-*/
+*/]]
+namespace "test"
 
-#ifndef RPCXX_EXCEPTION_HPP
-#define RPCXX_EXCEPTION_HPP
-
-#include <optional>
-#include <string>
-#include "common.hpp"
-#include "describe/describe.hpp"
-
-namespace rpcxx
-{
-
-struct RpcException : public std::exception
-{
-    RpcException() noexcept = default;
-    RpcException(std::string_view msg,
-                 ErrorCode code = ErrorCode::internal,
-                 std::optional<Json> data = {}) :
-        code(code),
-        message(msg),
-        data(std::move(data))
-    {}
-    ErrorCode code;
-    std::string message;
-    std::optional<Json> data;
-    const char* what() const noexcept override {
-        return message.c_str();
-    }
-};
-
-DESCRIBE("rpcxx::RpcException", RpcException) {
-    MEMBER("code", &_::code);
-    MEMBER("message", &_::message);
-    MEMBER("data", &_::data);
+Params = struct() {
+    a = string,
+    b = string("123"),
+    c = int:attrs("validated"), --, {"in_range", 5, 10} parametrized attrs not supported yet
 }
 
+methods() {
+    a = {} >> int,
+    b = {#Params},
+    c = {Params},
 }
-
-#endif //RPCXX_EXCEPTION_HPP

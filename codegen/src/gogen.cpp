@@ -71,6 +71,9 @@ static string PrintType(Type t) {
         [](WithDefault& a) -> string {
             return PrintType(a.item);
         },
+        [](WithAttrs& a) -> string {
+            return PrintType(a.item);
+        },
         [](TypeBase& v) -> string {
             return fmt::format("{}{}", v.ns.depth ? v.ns.name + "." : "", v.name);
         }

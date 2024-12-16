@@ -101,16 +101,12 @@ struct SaxHandler
             auto newCap = current.capacity ? current.capacity * 2 : 2;
             auto newObj = MakeObjectOf(newCap, alloc);
             if (current.object) {
-                memcpy(newObj, current.object, sizeof(JsonPair) * current.size);
+                ::memcpy(newObj, current.object, sizeof(JsonPair) * current.size);
             }
             current.object = newObj;
             current.capacity = newCap;
         }
-        if (opts.sorted) {
-            current.size = SortedInsertJson(current.object, current.size, {current.key, view}, current.capacity);
-        } else {
-            current.object[current.size++] = {current.key, view};
-        }
+        current.size = SortedInsertJson(current.object, current.size, {current.key, view}, current.capacity);
     }
 
     std::true_type doAdd(JsonView view) {
@@ -160,12 +156,7 @@ struct SaxHandler
     std::true_type EndObject(SizeType) {
         auto was = Pop();
         assert(was.tag == obj);
-        Data curr;
-        curr.size = was.size;
-        curr.d.object = was.object;
-        curr.type = t_object;
-        curr.flags = Flags(opts.sorted * f_sorted);
-        doAdd(JsonView(curr));
+        doAdd(JsonView(was.object, was.size, JsonView::sorted_tag{}));
         return {};
     }
     std::true_type Null() {

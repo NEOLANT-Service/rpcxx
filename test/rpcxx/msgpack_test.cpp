@@ -1148,7 +1148,6 @@ TEST_CASE("object")
             j[ss.str()] = MutableJson(t_null);
         }
         auto source = j.View(alloc);
-        CHECK(source.HasFlag(f_sorted));
         const auto result = DumpAsVec(source);
 
         // Checking against an expected vector byte by byte is
@@ -1165,7 +1164,6 @@ TEST_CASE("object")
 
         // roundtrip
         auto back = JsonFromVec(result);
-        CHECK(back->HasFlag(f_sorted));
         CHECK(back == source);
     }
 }

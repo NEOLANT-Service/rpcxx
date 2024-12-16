@@ -52,7 +52,6 @@ do_register(rpcxx-rpc-test rpcxx/rpc_test.cpp)
 do_register(rpcxx-json-test rpcxx/json_test.cpp)
 do_register(rpcxx-msgpack-test rpcxx/msgpack_test.cpp)
 do_register(rpcxx-future-test rpcxx/future_test.cpp)
-do_register(rpcxx-describe-test rpcxx/describe_test.cpp)
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(rpcxx-test-deps INTERFACE -ftime-trace)
@@ -77,6 +76,14 @@ add_executable(rpcxx-json-bench rpcxx/json_bench.cpp)
 target_link_libraries(rpcxx-json-bench PUBLIC rpcxx-bench-deps)
 add_executable(rpcxx-rpc-bench rpcxx/rpc_bench.cpp)
 target_link_libraries(rpcxx-rpc-bench PUBLIC rpcxx-bench-deps)
+
+if (RPCXX_WITH_CODEGEN)
+    rpcxx_codegen(spec.lua
+        PREFIX .generated
+        TARGET rpcxx-codegen-test)
+    add_executable(rpcxx-codegen-test-exe rpcxx/codegen_test.cpp)
+    target_link_libraries(rpcxx-codegen-test-exe PRIVATE rpcxx-codegen-test)
+endif()
 
 if (RPCXX_TEST_RPS)
     add_subdirectory(rps)

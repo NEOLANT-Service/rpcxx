@@ -229,32 +229,17 @@ JsonView parseOne(State& state, Arena& alloc, unsigned depth) noexcept
 JsonView parseObject(unsigned count, State& state, Arena& alloc, unsigned int depth) noexcept try
 {
     auto obj = MakeObjectOf(count, alloc);
-    if (state.opts.sorted) {
-        unsigned size = 0;
-        for (size_t i = 0u; i < count; ++i) {
-            auto key = parseOne(state, alloc, depth);
-            _CHECK(key);
-            if (meta_Unlikely(!key.Is(t_string)))
-                return JsonView::Discarded("keys must be string");
-            auto value = parseOne(state, alloc, depth);
-            _CHECK(value);
-            size = SortedInsertJson(obj, size, {key.GetStringUnsafe(), value}, count);
-        }
-        Data result{t_object, f_sorted, size, {}};
-        result.d.object = obj;
-        return JsonView(result);
-    } else {
-        for (size_t i = 0u; i < count; ++i) {
-            auto key = parseOne(state, alloc, depth);
-            _CHECK(key);
-            if (meta_Unlikely(!key.Is(t_string)))
-                return JsonView::Discarded("keys must be string");
-            obj[i].key = key.GetStringUnsafe();
-            obj[i].value = parseOne(state, alloc, depth);
-            _CHECK(obj[i].value);
-        }
-        return JsonView(obj, count);
+    unsigned size = 0;
+    for (size_t i = 0u; i < count; ++i) {
+        auto key = parseOne(state, alloc, depth);
+        _CHECK(key);
+        if (meta_Unlikely(!key.Is(t_string)))
+            return JsonView::Discarded("keys must be string");
+        auto value = parseOne(state, alloc, depth);
+        _CHECK(value);
+        size = SortedInsertJson(obj, size, {key.GetStringUnsafe(), value}, count);
     }
+    return JsonView(obj, size, JsonView::sorted_tag{});
 } catch(...) {
     return ErrOOM;
 }

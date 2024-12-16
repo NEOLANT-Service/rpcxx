@@ -46,14 +46,33 @@ struct Small {
     std::string field12;
     std::string field13;
 };
-DESCRIBE(Small,&_::field0,&_::field1,&_::field2,&_::field3,
-         &_::field4,&_::field5,&_::field6,&_::field7,&_::field8,
-         &_::field9,&_::field10,&_::field11,&_::field12,&_::field13)
+
+DESCRIBE("Small", Small) {
+    MEMBER("field0", &_::field0);
+    MEMBER("field1", &_::field1);
+    MEMBER("field2", &_::field2);
+    MEMBER("field3", &_::field3);
+    MEMBER("field4", &_::field4);
+    MEMBER("field5", &_::field5);
+    MEMBER("field6", &_::field6);
+    MEMBER("field7", &_::field7);
+    MEMBER("field8", &_::field8);
+    MEMBER("field9", &_::field9);
+    MEMBER("field10", &_::field10);
+    MEMBER("field11", &_::field11);
+    MEMBER("field12", &_::field12);
+    MEMBER("field13", &_::field13);
+}
+
 struct RpcBig {
     std::vector<Small> parts;
     std::vector<double> nums;
 };
-DESCRIBE(RpcBig, &_::parts, &_::nums)
+
+DESCRIBE("RpcBig", RpcBig) {
+    MEMBER("parts", &_::parts);
+    MEMBER("nums", &_::nums);
+}
 
 struct TestServer : rpcxx::Server {
     TestServer() {

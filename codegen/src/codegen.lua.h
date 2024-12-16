@@ -41,6 +41,24 @@ local function make_value(t, ...)
     return res
 end
 
+local function make_attrs(t, ...)
+    local attrs = {...}
+    for i, v in ipairs(attrs) do
+        if type(v) ~= "string" and type(v) ~= "table" then
+            error(":attrs(): Attribute #"..i.." is not a string or a table!")
+        end
+    end
+    if #attrs == 0 then return t end
+    local parent = t
+    if t.__subtype__ == "attrs" then
+        parent = t.__next__
+    end
+    local res = make_type(nil, parent)
+    res.__subtype__ = "attrs"
+    res.__attrs__ = attrs
+    return res
+end
+
 local function make_pack(t)
     if t.__subtype__ ~= "struct" then
         error(tostring(t).." is not a Struct. Pack (#) operation is not allowed")
@@ -145,28 +163,22 @@ local function resolve_name(t, path)
     end
 end
 
-make_type = function(name, _next, check_val, extra)
-    local meta = {
-        __tostring = print_type,
-        __call = make_value,
-        __len = make_pack,
-        __shr = make_signature,
-    }
-    if extra then
-        for k, v in pairs(extra) do
-            meta[k] = v
-        end
-    end
+make_type = function(name, _next, check_val)
     local t = setmetatable({
         __name__ = name,
         __is_type__ = true,
         __next__ = _next,
-        __attrs__ = state.attrs,
         __resolve_name__ = resolve_name,
         __source__ = state.source,
         __ns__ = state.ns,
         __ns_depth__ = state.depth,
-    }, meta)
+        attrs = make_attrs,
+    }, {
+        __tostring = print_type,
+        __call = make_value,
+        __len = make_pack,
+        __shr = make_signature,
+    })
     if check_val then
         t.__check__ = check_val
     elseif _next then
@@ -419,7 +431,7 @@ function struct(opts)
     check_ns()
     opts = init_opts(opts)
     return in_strict(function(shape)
-        local res = make_type(opts.name, nil, function(s, shape)
+        local check = function(s, shape)
             assert(type(shape) == "table", "struct default value should be table")
             local res = {}
             for k, v in pairs(s.__fields__) do
@@ -431,7 +443,8 @@ function struct(opts)
                 end
             end
             return res
-        end)
+        end
+        local res = make_type(opts.name, nil, check)
         assert(type(shape) == "table", '{field = t, ...} expected for struct()')
         res.__subtype__ = "struct"
         res.__fields__ = {}
@@ -449,7 +462,7 @@ function enum(opts)
     opts = init_opts(opts)
     return in_strict(function(values)
         assert(type(values) == "table", '{name, name2, ...} expected for enum()')
-        local res = make_type(opts.name, nil, function(s, v)
+        local check = function(s, v)
             assert(type(v) == "string", "enum default value should be a string")
             for i, f in ipairs(s.__fields__) do
                 if f == v then
@@ -457,7 +470,8 @@ function enum(opts)
                 end
             end
             error(v.." is not a valid member of "..tostring(s))
-        end)
+        end
+        local res = make_type(opts.name, nil, check)
         res.__subtype__ = "enum"
         res.__fields__ = values
         for k, v in pairs(values) do
@@ -557,21 +571,6 @@ function namespace(ns)
     end
     if namespaces.__root__ == nil then
         namespaces.__root__ = state
-    end
-end
-
-function attributes(file)
-    if type(file) == "string" then
-        table.insert(state.attrs, file)
-    elseif type(file) == "table" then
-        for _, v in pairs(file) do
-            table.insert(state.attrs, v)
-        end
-    else
-        error("attributes should be a filepath or list of paths")
-    end
-    for _, v in pairs(state.types) do
-        v.__attrs__ = state.attrs
     end
 end
 

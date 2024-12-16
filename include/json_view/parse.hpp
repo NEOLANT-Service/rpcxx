@@ -42,7 +42,6 @@ struct ParsingError : public std::runtime_error {
 struct ParseSettings {
     ParseSettings() = default;
     unsigned maxDepth = JV_DEFAULT_DEPTH;
-    bool sorted = true;
 };
 
 struct [[nodiscard]] ParseResult {

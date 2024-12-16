@@ -22,41 +22,41 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#ifndef RPCXX_EXCEPTION_HPP
-#define RPCXX_EXCEPTION_HPP
+#pragma once
+#include <string_view>
+#ifndef JV_KEY_HPP
+#define JV_KEY_HPP
 
-#include <optional>
-#include <string>
-#include "common.hpp"
-#include "describe/describe.hpp"
-
-namespace rpcxx
+namespace jv
 {
 
-struct RpcException : public std::exception
+struct Key
 {
-    RpcException() noexcept = default;
-    RpcException(std::string_view msg,
-                 ErrorCode code = ErrorCode::internal,
-                 std::optional<Json> data = {}) :
-        code(code),
-        message(msg),
-        data(std::move(data))
+    constexpr Key() noexcept = default;
+    constexpr Key(unsigned idx) noexcept : size(idx) {}
+    constexpr Key(std::string_view key) noexcept :
+        size(unsigned(key.size())), str(key.data() ? key.data() : "")
     {}
-    ErrorCode code;
-    std::string message;
-    std::optional<Json> data;
-    const char* what() const noexcept override {
-        return message.c_str();
+    template<typename Fn>
+    constexpr void Visit(Fn&& visitor) const {
+        if (str) visitor(std::string_view{str, size});
+        else visitor(size);
     }
+    bool IsString() const noexcept {
+        return bool(str);
+    }
+    unsigned Index() const noexcept {
+        return size;
+    }
+    std::string_view String() const noexcept {
+        return std::string_view{str, size};
+    }
+protected:
+    unsigned size{};
+    const char* str{};
 };
 
-DESCRIBE("rpcxx::RpcException", RpcException) {
-    MEMBER("code", &_::code);
-    MEMBER("message", &_::message);
-    MEMBER("data", &_::data);
-}
 
 }
 
-#endif //RPCXX_EXCEPTION_HPP
+#endif //JV_KEY_HPP

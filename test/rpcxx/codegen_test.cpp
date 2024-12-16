@@ -21,42 +21,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
+#include ".generated/spec.hpp"
 
-#ifndef RPCXX_EXCEPTION_HPP
-#define RPCXX_EXCEPTION_HPP
+struct validated{};
 
-#include <optional>
-#include <string>
-#include "common.hpp"
-#include "describe/describe.hpp"
-
-namespace rpcxx
+struct Consumer : test::RPC_Server
 {
-
-struct RpcException : public std::exception
-{
-    RpcException() noexcept = default;
-    RpcException(std::string_view msg,
-                 ErrorCode code = ErrorCode::internal,
-                 std::optional<Json> data = {}) :
-        code(code),
-        message(msg),
-        data(std::move(data))
-    {}
-    ErrorCode code;
-    std::string message;
-    std::optional<Json> data;
-    const char* what() const noexcept override {
-        return message.c_str();
-    }
+    Consumer() {}
 };
 
-DESCRIBE("rpcxx::RpcException", RpcException) {
-    MEMBER("code", &_::code);
-    MEMBER("message", &_::message);
-    MEMBER("data", &_::data);
+int main(int argc, char *argv[])
+{
+    return 0;
 }
-
-}
-
-#endif //RPCXX_EXCEPTION_HPP

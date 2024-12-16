@@ -277,7 +277,7 @@ struct BasicMutJson {
         copy(*this, source, depth);
     }
     [[nodiscard]]
-    JsonView View(Arena& alloc, unsigned depth = JV_DEFAULT_DEPTH, bool sorted = true) const;
+    JsonView View(Arena& alloc, unsigned depth = JV_DEFAULT_DEPTH) const;
 protected:
     template<typename T>
     void init(Type t, T*& o) {
@@ -442,7 +442,7 @@ struct Convert<Json> {
 };
 
 template<typename Config>
-JsonView BasicMutJson<Config>::View(Arena& alloc, unsigned depth, bool sorted) const {
+JsonView BasicMutJson<Config>::View(Arena& alloc, unsigned depth) const {
     DepthError::Check(depth--);
     switch (data.type) {
     case t_number: {
@@ -470,14 +470,14 @@ JsonView BasicMutJson<Config>::View(Arena& alloc, unsigned depth, bool sorted) c
         auto sz = unsigned(data.obj->size());
         auto obj = MakeObjectOf(sz, alloc);
         unsigned count = 0;
-        if (sorted && !already_sorted) {
+        if (!already_sorted) {
             for (auto& it: *data.obj) {
                 JsonPair curr;
                 curr.key = string_view(it.first);
                 curr.value = it.second.View(alloc, depth);
                 count = SortedInsertJson(obj, count, curr, sz);
             }
-            Data res{t_object, f_sorted, count, {}};
+            Data res{t_object, {}, count, {}};
             res.d.object = obj;
             return JsonView(res);
         } else {
@@ -486,7 +486,7 @@ JsonView BasicMutJson<Config>::View(Arena& alloc, unsigned depth, bool sorted) c
                 curr.key = string_view(it.first);
                 curr.value = it.second.View(alloc, depth);
             }
-            Data res{t_object, already_sorted ? f_sorted : f_none, sz, {}};
+            Data res{t_object, {}, sz, {}};
             res.d.object = obj;
             return JsonView(res);
         }

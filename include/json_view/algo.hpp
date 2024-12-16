@@ -78,7 +78,7 @@ inline unsigned SortedInsertJson(JsonPair* storage, unsigned size, JsonPair cons
         assert(size < cap);
         size++;
         auto diff = size_t(end - pos);
-        memmove(pos + 1, pos, sizeof(*pos) * diff);
+        ::memmove(pos + 1, pos, sizeof(*pos) * diff);
         *pos = entry;
     }
     return size;

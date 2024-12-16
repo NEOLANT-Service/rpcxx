@@ -62,10 +62,10 @@ void JsonView::throwMissmatch(Type wanted, TraceFrame const& frame) const {
     throw exc;
 }
 
-void JsonView::throwKeyError(string_view key, TraceFrame const& frame) const
+void JsonView::throwKeyError(std::string_view key, TraceFrame const& frame) const
 {
     KeyError err(frame);
-    err.missing = key;
+    err.missing = std::string{key};
     throw err;
 }
 

@@ -51,9 +51,12 @@ enum Type : int16_t {
     t_any_number = t_number | t_signed | t_unsigned,
 };
 
+// can be used to indicate some invariant about JsonView layout
+// unused for now
 enum Flags : short {
     f_none      = 0,
-    f_sorted    = 1 << 0, //is object + keys are sorted and unique
+    //flags below will not be used by library
+    f_user      = 1 << sizeof(short) * 4,
 };
 
 constexpr Type operator|(Type l, Type r) noexcept {
