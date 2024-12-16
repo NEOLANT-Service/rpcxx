@@ -503,7 +503,6 @@ struct ForeignError : JsonException
 struct KeyError : JsonException
 {
     using JsonException::JsonException;
-    unsigned idx{};
     std::string missing;
     const char* what() const noexcept override;
 };

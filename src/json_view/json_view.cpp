@@ -145,11 +145,7 @@ const char *KeyError::what() const noexcept try
     }
     msg += trace;
     msg += "key not found: "sv;
-    if (msg.empty()) {
-        msg += std::to_string(idx);
-    } else {
-        msg += missing;
-    }
+    msg += missing;
     return msg.c_str();
 } catch (...) {
     return "Json Key Error (+ OOM)";
