@@ -39,7 +39,7 @@ JsonView jv::Flatten(JsonView src, Arena& alloc, unsigned int depth)
             result.push_back(JsonPair{CopyString(ptr.Join(), alloc), Copy(item, alloc)});
         },
         depth);
-    return JsonView{result.data(), unsigned(result.size())};
+    return JsonView{result.data(), unsigned(result.size()), JsonView::sorted_tag{}};
 }
 
 namespace {
@@ -79,7 +79,7 @@ JsonView doCopy(JsonView src, Arena& alloc, unsigned int depth) {
             }
             obj[i].value = doCopy<flags>(curr.value, alloc, depth);
         }
-        return JsonView{obj, src.GetUnsafe().size}.WithFlagsUnsafe(src.GetFlags());
+        return JsonView{obj, src.GetUnsafe().size, JsonView::sorted_tag{}}.WithFlagsUnsafe(src.GetFlags());
     }
     default: {
         return src;

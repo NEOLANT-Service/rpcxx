@@ -23,9 +23,11 @@ SOFTWARE.
 */
 #include ".generated/spec.hpp"
 
+struct validated{};
+
 struct Consumer : test::RPC_Server
 {
-
+    Consumer() {}
 };
 
 int main(int argc, char *argv[])

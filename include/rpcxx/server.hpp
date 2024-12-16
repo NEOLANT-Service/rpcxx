@@ -269,7 +269,7 @@ private:
     void validateRequest(PackParams<T>, unsigned, CallCtx& ctx, bool notif = false) {
         constexpr auto desc = describe::Get<T>();
         constexpr auto rawNames = describe::field_names<T>();
-        constexpr auto count = desc.fields_count;
+        constexpr auto count = rawNames.size();
         static const std::array<std::string, count> names = prepNames<count>(rawNames);
         validateRequest(names.data(), count, ctx, notif);
     }
