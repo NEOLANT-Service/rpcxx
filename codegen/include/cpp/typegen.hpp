@@ -31,13 +31,15 @@ namespace rpcxx::gen::cpp::types {
 constexpr auto struct_fmt = FMT_COMPILE(R"EOF(
 struct {type_name} {{{fields}
 }};
-DESCRIBE({ns}::{type_name}{field_names})
+DESCRIBE("{ns}::{type_name}", {type_name}{cls_attrs}) {{{field_names}
+}}
 )EOF");
 
 constexpr auto enum_fmt = FMT_COMPILE(R"EOF(
 enum class {type_name} {{{fields}
 }};
-DESCRIBE({ns}::{type_name}{field_names})
+DESCRIBE("{ns}::{type_name}", {type_name}{cls_attrs}) {{{field_names}
+}}
 )EOF");
 
 constexpr auto field = FMT_COMPILE(R"EOF(
@@ -197,18 +199,16 @@ static string formatSingleType(FormatContext& ctx, Type t)
                 } else {
                     fields += fmt::format(FMT_COMPILE("\n    {},"), v.name);
                 }
-                field_names += ',';
-                if (++count % 3 == 0) {
-                    field_names += '\n';
-                    field_names += string(12, ' ');
-                }
-                field_names += "_::"+v.name;
+                field_names += fmt::format(
+                    FMT_COMPILE("\n    MEMBER(\"{0}\", _::{0}{1});"),
+                    v.name, "");
             }
             return fmt::format(
                 enum_fmt,
                 fmt::arg("ns", ToNamespace(a.ns.name)),
                 fmt::arg("type_name", rawName(t)),
                 fmt::arg("fields", fields),
+                fmt::arg("cls_attrs", ""),
                 fmt::arg("field_names", field_names)
                 );
         },
@@ -225,18 +225,16 @@ static string formatSingleType(FormatContext& ctx, Type t)
                     fmt::arg("name", subName),
                     fmt::arg("default", getDefault(subType))
                     );
-                field_names += ',';
-                if (++count % 3 == 0) {
-                    field_names += '\n';
-                    field_names += string(12, ' ');
-                }
-                field_names += "&_::"+string{subName};
+                field_names += fmt::format(
+                    FMT_COMPILE("\n    MEMBER(\"{0}\", &_::{0}{1});"),
+                    subName, "");
             }
             return fmt::format(
                 struct_fmt,
                 fmt::arg("ns", ToNamespace(s.ns.name)),
                 fmt::arg("type_name", rawName(t)),
                 fmt::arg("fields", fields),
+                fmt::arg("cls_attrs", ""),
                 fmt::arg("field_names", field_names)
                 );
         },
@@ -321,6 +319,9 @@ static size_t getSizeof(Type t) {
             return getSizeof(a.item);
         },
         [](WithDefault const& d){
+            return getSizeof(d.item);
+        },
+        [](WithAttrs const& d){
             return getSizeof(d.item);
         },
         [](Array const&){

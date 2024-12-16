@@ -193,12 +193,30 @@ struct Variant : public std::variant<Nil, Int, Num, String, Bool, Table, Array> 
 
 }
 
+struct Attr {
+    std::string name;
+    std::vector<def::Value>* args;
+    ~Attr() {
+        if (args) delete args;
+    }
+};
+
+struct WithAttrs : TypeBase {
+    Type item;
+    std::vector<Attr> attributes;
+};
+
 struct WithDefault : TypeBase {
     Type item;
     def::Value value;
 };
 
-struct TypeVariant : public std::variant<Builtin, Enum, Struct, Array, Map, Optional, Alias, WithDefault>
+struct TypeVariant :
+                     public std::variant<
+                         Builtin, Enum, Struct, Array,
+                         Map, Optional, Alias, WithDefault,
+                         WithAttrs
+                         >
 {
     using variant::variant;
     variant& AsVariant() noexcept {

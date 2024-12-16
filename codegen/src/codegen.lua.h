@@ -44,8 +44,8 @@ end
 local function make_attrs(t, ...)
     local attrs = {...}
     for i, v in ipairs(attrs) do
-        if type(v) ~= "string" then
-            error(":attrs(): Attribute #"..i.." is not a string!")
+        if type(v) ~= "string" and type(v) ~= "table" then
+            error(":attrs(): Attribute #"..i.." is not a string or a table!")
         end
     end
     if #attrs == 0 then return t end

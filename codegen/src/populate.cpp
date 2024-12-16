@@ -57,9 +57,10 @@ static void iterateTable(lua_State* L, Fn&& f) {
         }
         auto now = lua_gettop(L);
         if (was != now) {
-            throw Err("After calling an iterator function =>"
+            fmt::println(stderr, "After calling an iterator function =>"
                       " stack is not of the same size (was: {} != now: {})",
                       was, now);
+            std::abort();
         }
         if (!contin) {
             lua_pop(L, 2);
@@ -215,6 +216,12 @@ static def::Value parseDefault(lua_State* L) {
     return nullptr;
 }
 
+static std::vector<Attr> parseAttrs(lua_State* L) {
+    std::vector<Attr> res;
+    lua_pop(L, 1);
+    return res;
+}
+
 static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try {
     if (!test(L, "__is_type__")) {
         throw Err("Type expected: {}", tname);
@@ -230,6 +237,14 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
     }
     if (sub == "builtin") {
         throw Err("Unhandled builtin type: {}", tname);
+    } else if (sub == "attrs") {
+        WithAttrs result;
+        result.ns = ns;
+        result.name = tname;
+        result.item = resolveNext(L, ctx);
+        lua_getfield(L, -1, "__attrs__");
+        result.attributes = parseAttrs(L);
+        return registerIfNeeded(new TypeVariant{result}, ctx);
     } else if (sub == "alias") {
         Alias result;
         result.ns = ns;
@@ -293,7 +308,12 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
             auto subname = getSV(L, -2);
             lua_getfield(L, -1, "__name__");
             auto subtname = popSV(L);
-            auto found = resolveType(L, subtname, ctx);
+            Type found;
+            try {
+                found = resolveType(L, subtname, ctx);
+            } catch (std::exception& e) {
+                throw Err("{}\n =>\tWhile resolving for struct field: '{}'", e.what(), subname);
+            }
             if (!found) {
                 throw Err("Error resolving: {}.{}", tname, subname);
             }

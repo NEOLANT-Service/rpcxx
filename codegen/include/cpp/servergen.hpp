@@ -31,6 +31,7 @@ namespace rpcxx::gen::cpp::server
 constexpr auto format_inline = R"EOF(
 struct {server_name} : public rpcxx::Server
 {{
+    template<int=0>
     {server_name}();
     {server_name}* as_{server_name}() noexcept {{return this;}}
 {methods}
@@ -38,6 +39,7 @@ struct {server_name} : public rpcxx::Server
 )EOF";
 
 constexpr auto format_source = R"EOF(
+template<int>
 inline {server_name}::{server_name}() : Server() {{{register_methods}
 }}
 )EOF";

@@ -77,6 +77,14 @@ target_link_libraries(rpcxx-json-bench PUBLIC rpcxx-bench-deps)
 add_executable(rpcxx-rpc-bench rpcxx/rpc_bench.cpp)
 target_link_libraries(rpcxx-rpc-bench PUBLIC rpcxx-bench-deps)
 
+if (RPCXX_WITH_CODEGEN)
+    rpcxx_codegen(spec.lua
+        PREFIX .generated
+        TARGET rpcxx-codegen-test)
+    add_executable(rpcxx-codegen-test-exe rpcxx/codegen_test.cpp)
+    target_link_libraries(rpcxx-codegen-test-exe PRIVATE rpcxx-codegen-test)
+endif()
+
 if (RPCXX_TEST_RPS)
     add_subdirectory(rps)
 endif()
