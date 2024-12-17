@@ -153,12 +153,10 @@ function(rpcxx_codegen ARG_SPEC)
 
     set(output_stem ${prefix}/${output_stem})
     set(output ${output_stem}.hpp)
-    set(byprod ${output_stem}.private.hpp)
     set_property(SOURCE ${output} PROPERTY GENERATED 1)
 
     add_custom_command(
         OUTPUT ${output}
-        BYPRODUCTS ${byprod}
         COMMAND ${RPCXX_CODE_GENERATOR}
         ARGS ${ARG_SPEC} --output-dir ${prefix} ${kwargs}
         DEPENDS ${ARG_SPEC} ${_if_codegen_target} ${_scanned_deps}

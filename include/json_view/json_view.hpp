@@ -848,10 +848,8 @@ JsonView staticView(T const& obj, JsonPair* storage, unsigned& consumed) {
         constexpr auto total = describe::fields_count<T>();
         unsigned count = 0;
         unsigned current_consumed = 0;
-        describe::Get<T>::for_each([&](auto f){
+        describe::Get<T>::for_each([&](auto f) {
             if constexpr (f.is_field) {
-                using F = decltype(f);
-                using FT = typename F::type;
                 auto& curr = storage[count++];
                 curr.key = f.name;
                 curr.value = staticView(f.get(obj), storage + total + current_consumed, current_consumed);
@@ -948,19 +946,21 @@ void deserializeFromTuple(T& obj, JsonView json, TraceFrame const& frame) {
     unsigned count = 0;
     auto arr = json.GetUnsafe().d.array;
     auto sz = json.GetUnsafe().size;
-    desc.for_each_field([&](auto f){
-        using F = decltype(f);
-        using Idx = describe::extract_t<FieldIndexBase, F>;
-        unsigned index;
-        if constexpr (!std::is_void_v<Idx>) index = Idx::value;
-        else index = count;
-        auto& output = f.get(obj);
-        auto src = tupleGet(isRequired<F>(), index, arr, sz, frame);
-        TraceFrame fieldFrame(f.name, frame);
-        src.GetTo(output, fieldFrame);
-        using validator = describe::extract_t<Validator, F>;
-        runValidator<validator>(output, fieldFrame);
-        count++;
+    desc.for_each([&](auto f) {
+        if constexpr (f.is_field) {
+            using F = decltype(f);
+            using Idx = describe::extract_t<FieldIndexBase, F>;
+            unsigned index;
+            if constexpr (!std::is_void_v<Idx>) index = Idx::value;
+            else index = count;
+            auto& output = f.get(obj);
+            auto src = tupleGet(isRequired<F>(), index, arr, sz, frame);
+            TraceFrame fieldFrame(f.name, frame);
+            src.GetTo(output, fieldFrame);
+            using validator = describe::extract_t<Validator, F>;
+            runValidator<validator>(output, fieldFrame);
+            count++;
+        }
     });
 }
 
