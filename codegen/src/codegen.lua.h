@@ -41,13 +41,17 @@ local function make_value(t, ...)
     return res
 end
 
-local function make_attrs(t, ...)
-    local attrs = {...}
+local function validate_attrs(attrs)
     for i, v in ipairs(attrs) do
         if type(v) ~= "string" and type(v) ~= "table" then
             error(":attrs(): Attribute #"..i.." is not a string or a table!")
         end
     end
+end
+
+local function make_attrs(t, ...)
+    local attrs = {...}
+    validate_attrs(attrs)
     if #attrs == 0 then return t end
     local parent = t
     if t.__subtype__ == "attrs" then
@@ -430,62 +434,80 @@ end
 function struct(opts)
     check_ns()
     opts = init_opts(opts)
-    return in_strict(function(shape)
-        local check = function(s, shape)
-            assert(type(shape) == "table", "struct default value should be table")
-            local res = {}
-            for k, v in pairs(s.__fields__) do
-                if shape[k] then
-                    if not v.__check__ then
-                        error("Field of struct: "..k.." ("..tostring(v)..") does not support default values")
+    return setmetatable({
+        attrs = function(self, ...)
+            self.__attrs__ = {...}
+            validate_attrs(self.__attrs__)
+            return self
+        end
+    }, {
+        __call = in_strict(function(self, shape)
+            local check = function(s, shape)
+                assert(type(shape) == "table", "struct default value should be table")
+                local res = {}
+                for k, v in pairs(s.__fields__) do
+                    if shape[k] then
+                        if not v.__check__ then
+                            error("Field of struct: "..k.." ("..tostring(v)..") does not support default values")
+                        end
+                        res[k] = v:__check__(shape[k])
                     end
-                    res[k] = v:__check__(shape[k])
+                end
+                return res
+            end
+            local res = make_type(opts.name, nil, check)
+            assert(type(shape) == "table", '{field = t, ...} expected for struct()')
+            res.__subtype__ = "struct"
+            res.__fields__ = {}
+            res.__attrs__ = self.__attrs__ or {}
+            for k, v in pairs(shape) do
+                if not is_priv(k) then
+                    res.__fields__[k] = resolve_type(v, k)
                 end
             end
             return res
-        end
-        local res = make_type(opts.name, nil, check)
-        assert(type(shape) == "table", '{field = t, ...} expected for struct()')
-        res.__subtype__ = "struct"
-        res.__fields__ = {}
-        for k, v in pairs(shape) do
-            if not is_priv(k) then
-                res.__fields__[k] = resolve_type(v, k)
-            end
-        end
-        return res
-    end)
+        end)
+    })
 end
 
 function enum(opts)
     check_ns()
     opts = init_opts(opts)
-    return in_strict(function(values)
-        assert(type(values) == "table", '{name, name2, ...} expected for enum()')
-        local check = function(s, v)
-            assert(type(v) == "string", "enum default value should be a string")
-            for i, f in ipairs(s.__fields__) do
-                if f == v then
-                    return v
+    return setmetatable({
+        attrs = function(self, ...)
+            self.__attrs__ = {...}
+            validate_attrs(self.__attrs__)
+            return self
+        end
+    }, {
+        __call = in_strict(function(self, values)
+            assert(type(values) == "table", '{name, name2, ...} expected for enum()')
+            local check = function(s, v)
+                assert(type(v) == "string", "enum default value should be a string")
+                for i, f in ipairs(s.__fields__) do
+                    if f == v then
+                        return v
+                    end
                 end
+                error(v.." is not a valid member of "..tostring(s))
             end
-            error(v.." is not a valid member of "..tostring(s))
-        end
-        local res = make_type(opts.name, nil, check)
-        res.__subtype__ = "enum"
-        res.__fields__ = values
-        for k, v in pairs(values) do
-            if type(k) == "number" then
-                assert(type(k) == "number", "Enum keys should be integers")
-                assert(type(v) == "string", "Enum values should be strings")
-            else
-                assert(type(k) == "string", "Strict Enum keys should be strings")
-                assert(type(v) == "number", "Strict Enum values should be integers")
+            local res = make_type(opts.name, nil, check)
+            res.__subtype__ = "enum"
+            res.__fields__ = values
+            res.__attrs__ = self.__attrs__ or {}
+            for k, v in pairs(values) do
+                if type(k) == "number" then
+                    assert(type(k) == "number", "Enum keys should be integers")
+                    assert(type(v) == "string", "Enum values should be strings")
+                else
+                    assert(type(k) == "string", "Strict Enum keys should be strings")
+                    assert(type(v) == "number", "Strict Enum values should be integers")
+                end
+                res[k] = v
             end
-            res[k] = v
-        end
-        return res
-    end)
+            return res
+        end)
+    })
 end
 
 function routes(opts)

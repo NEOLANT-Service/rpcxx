@@ -29,6 +29,7 @@ SOFTWARE.
 #include <fmt/core.h>
 #include <fmt/args.h>
 #include <fmt/compile.h>
+#include <set>
 #include <string>
 #include <string_view>
 #include <filesystem>
@@ -117,11 +118,19 @@ struct Builtin {
     Kind kind;
 };
 
+struct Attr {
+    std::string name;
+    bool operator<(Attr const& r) const noexcept {
+        return name < r.name;
+    }
+};
+
 struct Enum : TypeBase {
     struct Value {
         string name;
         std::optional<int64_t> number;
     };
+    std::set<Attr> attributes;
     vector<Value> values;
 };
 
@@ -131,6 +140,7 @@ struct Struct : TypeBase {
         Type type = nullptr;
         size_t sz = 0;
     };
+    std::set<Attr> attributes;
     vector<Field> fields;
 };
 
@@ -193,20 +203,9 @@ struct Variant : public std::variant<Nil, Int, Num, String, Bool, Table, Array> 
 
 }
 
-struct Attr {
-    std::string name;
-    std::vector<def::Value>* args;
-    bool operator<(Attr const& r) const noexcept {
-        return name < r.name;
-    }
-    ~Attr() {
-        if (args) delete args;
-    }
-};
-
 struct WithAttrs : TypeBase {
     Type item;
-    std::vector<Attr> attributes;
+    std::set<Attr> attributes;
 };
 
 struct WithDefault : TypeBase {

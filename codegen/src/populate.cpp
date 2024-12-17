@@ -216,8 +216,8 @@ static def::Value parseDefault(lua_State* L) {
     return nullptr;
 }
 
-static std::vector<Attr> parseAttrs(lua_State* L) {
-    std::vector<Attr> res;
+static std::set<Attr> parseAttrs(lua_State* L) {
+    std::set<Attr> res;
     if (lua_type(L, -1) != LUA_TTABLE) {
         lua_pop(L, 1); // pop table
         throw Err("Table expected as attributes list");
@@ -227,8 +227,7 @@ static std::vector<Attr> parseAttrs(lua_State* L) {
         if (lua_type(L, -1) != LUA_TSTRING) {
             throw Err("Only strings supported as attribute names");
         }
-        auto& curr = res.emplace_back();
-        curr.name = std::string{popSV(L)};
+        res.insert(Attr{string{popSV(L)}});
     }
     lua_pop(L, 2); //pop table + nil
     return res;
@@ -277,6 +276,8 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
         Enum result;
         result.ns = ns;
         result.name = tname;
+        lua_getfield(L, -1, "__attrs__");
+        result.attributes = parseAttrs(L);
         lua_getfield(L, -1, "__fields__");
         iterateTableConsume(L, [&]{
             Enum::Value curr;
@@ -315,6 +316,8 @@ static Type resolveType(lua_State* L, string_view tname, FormatContext& ctx) try
         Struct result;
         result.ns = ns;
         result.name = tname;
+        lua_getfield(L, -1, "__attrs__");
+        result.attributes = parseAttrs(L);
         lua_getfield(L, -1, "__fields__");
         iterateTableConsume(L, [&]{
             auto subname = getSV(L, -2);

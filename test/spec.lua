@@ -23,10 +23,14 @@ SOFTWARE.
 */]]
 namespace "test"
 
-Params = struct() {
+Params = struct():attrs("my.attr") {
     a = string,
     b = string("123"),
-    c = int:attrs("validated"), --, {"in_range", 5, 10} parametrized attrs not supported yet
+    c = int:attrs("validated"),
+}
+
+TestEnum = enum():attrs("my.enumAttrs") {
+    kek = 1,
 }
 
 methods() {

@@ -49,6 +49,9 @@ using std::string_view;
 
 //! Attributes
 
+//! Treat all fields as optional
+struct SkipMissing {};
+
 //! Convert structs as tuples (arrays) of fields
 struct StructAsTuple {};
 
@@ -893,7 +896,9 @@ struct fieldHelper {
 
 template<typename F>
 constexpr bool isRequired() {
-    return !is_optional<typename F::type>::value;
+    constexpr bool is_opt = describe::has_v<SkipMissing, typename F::cls>
+                            || is_optional<typename F::type>::value;
+    return !is_opt;
 }
 
 template<typename Cls>
