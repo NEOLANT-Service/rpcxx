@@ -3,7 +3,7 @@
 /*
 Copyright 2024 "NEOLANT Service", "NEOLANT Kalinigrad", Alexey Doronin, Anastasia Lugovets, Dmitriy Dyakonov
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
+Permission is hereby granted, free of charge, to any person obtaining enumType copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
@@ -180,6 +180,34 @@ static string getDefault(Type t) {
         });
 }
 
+static std::pair<string, string> getAttrNsAndName(string_view attr) {
+    auto pos = attr.find_last_of('.');
+    string ns;
+    string_view name{attr};
+    if (pos != string::npos) {
+        ns = ToNamespace(string_view{attr}.substr(0, pos));
+        name = string_view{attr}.substr(pos + 1);
+    }
+    if (ns.empty()) {
+        return {{}, string{name}};
+    } else {
+        return {std::move(ns), string{name}};
+    }
+}
+
+static string formatAttrs(std::set<Attr> const& attrs) {
+    string res;
+    for (auto& a: attrs) {
+        auto [ns, name] = getAttrNsAndName(a.name);
+        if (ns.empty()) {
+            res += ", " + name;
+        } else {
+            res += ", " + ns + "::" + name;
+        }
+    }
+    return res;
+}
+
 static string formatSingleType(FormatContext& ctx, Type t)
 {
     return Visit(t->AsVariant(),
@@ -190,11 +218,11 @@ static string formatSingleType(FormatContext& ctx, Type t)
                 fmt::arg("aliased_type", PrintType(a.item))
                 );
         },
-        [&](const Enum& a) {
+        [&](const Enum& enumType) {
             string fields;
             string field_names;
             unsigned count = 0;
-            for (auto& v: a.values) {
+            for (auto& v: enumType.values) {
                 if (auto& n = v.number) {
                     fields += fmt::format(FMT_COMPILE("\n    {} = {},"), v.name, *n);
                 } else {
@@ -206,18 +234,18 @@ static string formatSingleType(FormatContext& ctx, Type t)
             }
             return fmt::format(
                 enum_fmt,
-                fmt::arg("ns", ToNamespace(a.ns.name)),
+                fmt::arg("ns", ToNamespace(enumType.ns.name)),
                 fmt::arg("type_name", rawName(t)),
                 fmt::arg("fields", fields),
-                fmt::arg("cls_attrs", ""),
+                fmt::arg("cls_attrs", formatAttrs(enumType.attributes)),
                 fmt::arg("field_names", field_names)
                 );
         },
-        [&](Struct const& s) {
+        [&](Struct const& structT) {
             string fields;
             string field_names;
             unsigned count = 0;
-            for (auto& it: s.fields) {
+            for (auto& it: structT.fields) {
                 auto& subName = it.name;
                 auto& subType = it.type;
                 fields += fmt::format(
@@ -228,9 +256,7 @@ static string formatSingleType(FormatContext& ctx, Type t)
                     );
                 string fieldAttrs;
                 if (auto all = as<WithAttrs>(subType)) {
-                    for (auto& a: all->attributes) {
-                        fieldAttrs += ", " + a.name;
-                    }
+                    fieldAttrs = formatAttrs(all->attributes);
                 }
                 field_names += fmt::format(
                     FMT_COMPILE("\n    MEMBER(\"{0}\", &_::{0}{1});"),
@@ -238,10 +264,10 @@ static string formatSingleType(FormatContext& ctx, Type t)
             }
             return fmt::format(
                 struct_fmt,
-                fmt::arg("ns", ToNamespace(s.ns.name)),
+                fmt::arg("ns", ToNamespace(structT.ns.name)),
                 fmt::arg("type_name", rawName(t)),
                 fmt::arg("fields", fields),
-                fmt::arg("cls_attrs", ""),
+                fmt::arg("cls_attrs", formatAttrs(structT.attributes)),
                 fmt::arg("field_names", field_names)
                 );
         },
@@ -354,12 +380,23 @@ static void reorderMembers(Struct& t) {
     });
 }
 
-static void collectAttrs(Type t, std::set<Attr*>& out) {
+struct AttrsPtrCmp {
+    bool operator()(const Attr* l, const Attr* r) const noexcept {
+        return l->name < r->name;
+    }
+};
+
+using AttrsSet = std::set<const Attr*, AttrsPtrCmp>;
+
+static void collectAttrs(Type t, AttrsSet& out) {
     Visit(
         t->AsVariant(),
         [&](Struct& s){
             for (auto& f: s.fields) {
                 collectAttrs(f.type, out);
+            }
+            for (auto& a: s.attributes) {
+                out.insert(&a);
             }
         },
         [&](WithAttrs& s){
@@ -368,7 +405,9 @@ static void collectAttrs(Type t, std::set<Attr*>& out) {
             }
         },
         [&](Enum& s){
-            // no attrs for enum yet
+            for (auto& a: s.attributes) {
+                out.insert(&a);
+            }
         },
         [](Builtin){},
         [&](auto& s){
@@ -376,18 +415,12 @@ static void collectAttrs(Type t, std::set<Attr*>& out) {
         });
 }
 
-static void forwardDeclareAttrs(std::set<Attr*> const& attrs, string& result) {
+static void forwardDeclareAttrs(AttrsSet const& attrs, string& result) {
     if (attrs.size()) {
         result += "\n//Attributes forward declarations: \n";
     }
     for (auto& a: attrs) {
-        auto pos = a->name.find_last_of('.');
-        string_view ns;
-        string_view name{a->name};
-        if (pos != string::npos) {
-            ns = ToNamespace(string_view{a->name}.substr(0, pos));
-            name = string_view{a->name}.substr(pos + 1);
-        }
+        auto [ns, name] = getAttrNsAndName(a->name);
         if (ns.empty()) {
             result += fmt::format(FMT_COMPILE("\nstruct {};"), name);
         } else {
@@ -406,7 +439,7 @@ std::string Format(FormatContext& ctx)
     if (!(ctx.params.targets & TargetTypes))
         return "";
     std::vector<DepPair> byDepth;
-    std::set<Attr*> attrs;
+    AttrsSet attrs;
     for (auto& t: ctx.ast.types) {
         auto* asStruct = std::get_if<Struct>(&t->AsVariant());
         if (asStruct) {
