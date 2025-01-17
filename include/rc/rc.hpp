@@ -111,8 +111,10 @@ struct SingleVirtualBase : public DefaultBase {
 struct VirtualBase : public virtual SingleVirtualBase {};
 
 inline static void _lock(std::atomic_bool& lock) {
-    auto unlocked = false;
-    while(!lock.compare_exchange_strong(unlocked, true, std::memory_order_acq_rel));
+    bool was = false;
+    while(!lock.compare_exchange_strong(was, true, std::memory_order_acq_rel)) {
+        was = false;
+    }
 }
 
 inline static void _unlock(std::atomic_bool& lock) {
@@ -126,9 +128,11 @@ struct WeakableVirtual : VirtualBase {
             if (d->_block) {
                 d->_block->data.store(nullptr, std::memory_order_release);
             }
+            _unlock(d->_block->_sync);
             delete d;
+        } else {
+            _unlock(d->_block->_sync);
         }
-        _unlock(d->_block->_sync);
     }
     template<typename T>
     friend Strong<WeakBlock> GetWeak(T* d, int* offset) {

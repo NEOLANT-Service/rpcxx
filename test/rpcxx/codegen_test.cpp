@@ -23,6 +23,9 @@ SOFTWARE.
 */
 #include ".generated/spec.hpp"
 
+// forward-declared attrs defs
+namespace my { struct attr {}; }
+namespace my { struct enumAttrs {}; }
 struct validated{};
 
 struct Consumer : test::RPC_Server
