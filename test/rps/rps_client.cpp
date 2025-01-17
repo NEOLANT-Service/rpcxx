@@ -63,6 +63,7 @@ void onDone() {
     runs.fetch_add(1, std::memory_order_relaxed);
     bool was = true;
     if (print.compare_exchange_strong(was, false, std::memory_order_relaxed, std::memory_order_relaxed)) {
+        was = true;
         std::cout << "RPS: " << runs << std::endl;
         runs = 0;
     }
