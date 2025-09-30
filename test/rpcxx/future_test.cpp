@@ -84,7 +84,13 @@ TEST_CASE("memory") {
 
 TEST_CASE("thread safety") {
     int counter = 0;
-    auto fut = GatherTuple(in(0.5s), in(0.25s), in(0.15s))
+    std::vector<Future<void>> futs;
+    for (auto i = 0; i < 200; ++i) {
+        futs.push_back(in(0.5s));
+        futs.push_back(in(0.25s));
+        futs.push_back(in(0.15s));
+    }
+    auto fut = Gather(std::move(futs))
         .ThenSync([&]{
             counter++;
         })

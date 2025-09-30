@@ -41,7 +41,7 @@ template<typename...Args>
 using return_t = std::conditional_t<(std::is_void_v<Args> && ...), void, std::tuple<non_void_t<Args>...>>;
 
 template<typename...Args>
-struct GatherCtx : rc::DefaultBase {
+struct TupleGatherCtx : rc::DefaultBase {
     std::recursive_mutex mut;
     non_void_t<return_t<Args...>> results {};
     size_t doneCount = {};
@@ -49,7 +49,7 @@ struct GatherCtx : rc::DefaultBase {
 };
 
 template<typename...Args>
-using SharedGatherCtx = rc::Strong<GatherCtx<Args...>>;
+using SharedGatherCtx = rc::Strong<TupleGatherCtx<Args...>>;
 
 template<size_t idx, typename T, typename...Args>
 void handleSingleFut(SharedGatherCtx<Args...> ctx, Future<T> fut)
@@ -84,13 +84,54 @@ void callGatherHandlers(SharedGatherCtx<Args...> ctx,
     (handleSingleFut<idx>(ctx, std::move(futs)), ...);
 }
 
+// Normal Gather
+
+template<typename T>
+struct GatherCtx
+{
+    using promise_t = std::conditional_t<std::is_void_v<T>, void, std::vector<T>>;
+    using results_t = std::conditional_t<std::is_void_v<T>, empty, std::vector<T>>;
+
+    std::recursive_mutex mut;
+    results_t results;
+    Promise<promise_t> prom;
+    size_t left;
+};
+
+template<typename T>
+struct GatherHandler
+{
+    std::shared_ptr<GatherCtx<T>> ctx;
+    size_t curr;
+
+    void operator()(Result<T> res)
+    {
+        std::lock_guard lock(ctx->mut);
+        if (!ctx->prom.IsValid())
+            return;
+        if (res) {
+            if constexpr (!std::is_void_v<T>)
+                ctx->results[curr] = res.get();
+            if (!--ctx->left) {
+                if constexpr (!std::is_void_v<T>)
+                    ctx->prom(std::move(ctx->results));
+                else
+                    ctx->prom();
+            }
+        } else {
+            ctx->prom(std::move(res).get_exception());
+        }
+    }
+};
+
+
 }
 
 template<typename...Args>
 Future<detail::return_t<Args...>> GatherTuple(Future<Args>...futs)
 {
     static_assert(sizeof...(Args), "Empty Promise List");
-    using Ctx = detail::GatherCtx<Args...>;
+    using Ctx = detail::TupleGatherCtx<Args...>;
     auto ctx = rc::Strong(new Ctx);
     auto gathered = ctx->setter.GetFuture();
     callGatherHandlers(std::move(ctx), std::index_sequence_for<Args...>{}, std::move(futs)...);
@@ -105,21 +146,14 @@ auto Gather(Iter iter, Sent end)
     if constexpr (!std::is_void_v<T>) {
         static_assert(std::is_default_constructible_v<T>);
     }
-    using promT = std::conditional_t<std::is_void_v<T>, void, std::vector<T>>;
-    using resultsT = std::conditional_t<std::is_void_v<T>, empty, std::vector<T>>;
+    using promise_t = std::conditional_t<std::is_void_v<T>, void, std::vector<T>>;
     if (iter == end) {
         if constexpr (!std::is_void_v<T>)
-            return fut::Resolved<promT>(promT{});
+            return fut::Resolved<promise_t>(promise_t{});
         else
             return fut::Resolved();
     }
-    struct Ctx {
-        std::recursive_mutex mut;
-        resultsT results;
-        Promise<promT> prom;
-        size_t left;
-    };
-    auto ctx = std::make_shared<Ctx>();
+    auto ctx = std::make_shared<detail::GatherCtx<T>>();
     ctx->left = size_t(std::distance(iter, end));
     if constexpr (!std::is_void_v<T>) {
         ctx->results.resize(ctx->left);
@@ -128,23 +162,7 @@ auto Gather(Iter iter, Sent end)
     size_t idx = 0;
     for (;iter != end; ++iter) {
         auto curr = idx++;
-        (*iter).AtLastSync([=](auto res){
-            std::lock_guard lock(ctx->mut);
-            if (!ctx->prom.IsValid())
-                return;
-            if (res) {
-                if constexpr (!std::is_void_v<T>)
-                    ctx->results[curr] = res.get();
-                if (!--ctx->left) {                    
-                    if constexpr (!std::is_void_v<T>)
-                        ctx->prom(std::move(ctx->results));
-                    else
-                        ctx->prom();
-                }
-            } else {
-                ctx->prom(std::move(res).get_exception());
-            }
-        });
+        (*iter).AtLastSync(detail::GatherHandler<T>{ctx, curr});
     }
     return final;
 }
