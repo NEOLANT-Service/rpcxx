@@ -177,6 +177,7 @@ make_type = function(name, _next, check_val)
         __ns__ = state.ns,
         __ns_depth__ = state.depth,
         attrs = make_attrs,
+        default = make_value,
     }, {
         __tostring = print_type,
         __call = make_value,

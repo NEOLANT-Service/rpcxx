@@ -24,9 +24,10 @@ SOFTWARE.
 namespace "test"
 
 Params = struct():attrs("my.attr") {
-    a = string,
+    a = string:default("321"),
     b = string("123"),
-    c = int:attrs("validated"),
+    c = int:attrs("validated"):default(3),
+    d = int(4):attrs("validated"),
 }
 
 TestEnum = enum():attrs("my.enumAttrs") {

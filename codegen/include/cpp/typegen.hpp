@@ -79,6 +79,16 @@ static string defaultFromTrivial(def::Value v) {
         );
 }
 
+struct AttrsPtrCmp {
+    bool operator()(const Attr* l, const Attr* r) const noexcept {
+        return l->name < r->name;
+    }
+};
+
+using AttrsRefSet = std::set<const Attr*, AttrsPtrCmp>;
+
+static void collectAttrs(Type t, AttrsRefSet& out);
+
 static string defaultFromRaw(Type t, def::Value v);
 
 static string defaultFromArray(Array& t, def::Value adef) {
@@ -175,6 +185,9 @@ static string getDefault(Type t) {
         [&](Alias& a) -> string {
             return getDefault(a.item);
         },
+        [&](WithAttrs& a) -> string {
+            return getDefault(a.item);
+        },
         [](auto&) -> string {
             return {};
         });
@@ -208,7 +221,20 @@ static string formatAttrs(std::set<Attr> const& attrs) {
     return res;
 }
 
-static string formatSingleType(FormatContext& ctx, Type t)
+static string formatAttrs(AttrsRefSet const& attrs) {
+    string res;
+    for (auto& a: attrs) {
+        auto [ns, name] = getAttrNsAndName(a->name);
+        if (ns.empty()) {
+            res += ", " + name;
+        } else {
+            res += ", " + ns + "::" + name;
+        }
+    }
+    return res;
+}
+
+static string formatSingleType(FormatContext&, Type t)
 {
     return Visit(t->AsVariant(),
         [&](const Alias& a) {
@@ -221,7 +247,6 @@ static string formatSingleType(FormatContext& ctx, Type t)
         [&](const Enum& enumType) {
             string fields;
             string field_names;
-            unsigned count = 0;
             for (auto& v: enumType.values) {
                 if (auto& n = v.number) {
                     fields += fmt::format(FMT_COMPILE("\n    {} = {},"), v.name, *n);
@@ -244,7 +269,6 @@ static string formatSingleType(FormatContext& ctx, Type t)
         [&](Struct const& structT) {
             string fields;
             string field_names;
-            unsigned count = 0;
             for (auto& it: structT.fields) {
                 auto& subName = it.name;
                 auto& subType = it.type;
@@ -254,10 +278,9 @@ static string formatSingleType(FormatContext& ctx, Type t)
                     fmt::arg("name", subName),
                     fmt::arg("default", getDefault(subType))
                     );
-                string fieldAttrs;
-                if (auto all = as<WithAttrs>(subType)) {
-                    fieldAttrs = formatAttrs(all->attributes);
-                }
+                AttrsRefSet fieldAttrsSet;
+                collectAttrs(subType, fieldAttrsSet);
+                string fieldAttrs = formatAttrs(fieldAttrsSet);
                 field_names += fmt::format(
                     FMT_COMPILE("\n    MEMBER(\"{0}\", &_::{0}{1});"),
                     subName, fieldAttrs);
@@ -380,15 +403,7 @@ static void reorderMembers(Struct& t) {
     });
 }
 
-struct AttrsPtrCmp {
-    bool operator()(const Attr* l, const Attr* r) const noexcept {
-        return l->name < r->name;
-    }
-};
-
-using AttrsSet = std::set<const Attr*, AttrsPtrCmp>;
-
-static void collectAttrs(Type t, AttrsSet& out) {
+static void collectAttrs(Type t, AttrsRefSet& out) {
     Visit(
         t->AsVariant(),
         [&](Struct& s){
@@ -415,7 +430,7 @@ static void collectAttrs(Type t, AttrsSet& out) {
         });
 }
 
-static void forwardDeclareAttrs(AttrsSet const& attrs, string& result) {
+static void forwardDeclareAttrs(AttrsRefSet const& attrs, string& result) {
     if (attrs.size()) {
         result += "\n//Attributes forward declarations: \n";
     }
@@ -439,7 +454,7 @@ std::string Format(FormatContext& ctx)
     if (!(ctx.params.targets & TargetTypes))
         return "";
     std::vector<DepPair> byDepth;
-    AttrsSet attrs;
+    AttrsRefSet attrs;
     for (auto& t: ctx.ast.types) {
         auto* asStruct = std::get_if<Struct>(&t->AsVariant());
         if (asStruct) {
