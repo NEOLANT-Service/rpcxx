@@ -26,6 +26,9 @@ SOFTWARE.
 // forward-declared attrs defs
 namespace my { struct attr {}; }
 namespace my { struct enumAttrs {}; }
+namespace my { struct deep {}; }
+namespace my { struct deep_field {}; }
+
 struct validated{};
 
 struct Consumer : test::RPC_Server

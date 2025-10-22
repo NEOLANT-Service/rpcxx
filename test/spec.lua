@@ -23,11 +23,16 @@ SOFTWARE.
 */]]
 namespace "test"
 
+ParamsDeep = struct():attrs("my.deep") {
+    deep_a = string:default("321"):attrs("my.deep_field"),
+}
+
 Params = struct():attrs("my.attr") {
     a = string:default("321"),
     b = string("123"),
     c = int:attrs("validated"):default(3),
     d = int(4):attrs("validated"),
+    deep = ParamsDeep
 }
 
 TestEnum = enum():attrs("my.enumAttrs") {

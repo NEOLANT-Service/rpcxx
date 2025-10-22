@@ -87,7 +87,13 @@ struct AttrsPtrCmp {
 
 using AttrsRefSet = std::set<const Attr*, AttrsPtrCmp>;
 
-static void collectAttrs(Type t, AttrsRefSet& out);
+enum CollectOpts
+{
+    COLLECT_ALL,
+    COLLECT_FOR_FIELD,
+};
+
+static void collectAttrs(Type t, AttrsRefSet& out, CollectOpts opts);
 
 static string defaultFromRaw(Type t, def::Value v);
 
@@ -279,7 +285,7 @@ static string formatSingleType(FormatContext&, Type t)
                     fmt::arg("default", getDefault(subType))
                     );
                 AttrsRefSet fieldAttrsSet;
-                collectAttrs(subType, fieldAttrsSet);
+                collectAttrs(subType, fieldAttrsSet, COLLECT_FOR_FIELD);
                 string fieldAttrs = formatAttrs(fieldAttrsSet);
                 field_names += fmt::format(
                     FMT_COMPILE("\n    MEMBER(\"{0}\", &_::{0}{1});"),
@@ -403,15 +409,17 @@ static void reorderMembers(Struct& t) {
     });
 }
 
-static void collectAttrs(Type t, AttrsRefSet& out) {
+static void collectAttrs(Type t, AttrsRefSet& out, CollectOpts opts) {
     Visit(
         t->AsVariant(),
         [&](Struct& s){
-            for (auto& f: s.fields) {
-                collectAttrs(f.type, out);
-            }
-            for (auto& a: s.attributes) {
-                out.insert(&a);
+            if (opts == COLLECT_ALL) {
+                for (auto& f: s.fields) {
+                    collectAttrs(f.type, out, opts);
+                }
+                for (auto& a: s.attributes) {
+                    out.insert(&a);
+                }
             }
         },
         [&](WithAttrs& s){
@@ -420,13 +428,25 @@ static void collectAttrs(Type t, AttrsRefSet& out) {
             }
         },
         [&](Enum& s){
-            for (auto& a: s.attributes) {
-                out.insert(&a);
+            if (opts == COLLECT_ALL) {
+                for (auto& a: s.attributes) {
+                    out.insert(&a);
+                }
+            }
+        },
+        [&](Array& s){
+            if (opts == COLLECT_ALL) {
+                collectAttrs(s.item, out, opts);
+            }
+        },
+        [&](Map& s){
+            if (opts == COLLECT_ALL) {
+                collectAttrs(s.item, out, opts);
             }
         },
         [](Builtin){},
         [&](auto& s){
-            collectAttrs(s.item, out);
+            collectAttrs(s.item, out, opts);
         });
 }
 
@@ -461,7 +481,7 @@ std::string Format(FormatContext& ctx)
             reorderMembers(*asStruct);
         }
         if (asStruct || is<Alias>(t) || is<Enum>(t)) {
-            collectAttrs(t, attrs); //remove this scan later?
+            collectAttrs(t, attrs, COLLECT_ALL); //remove this scan later?
             byDepth.push_back({CalcDepth(t), t});
         }
     }
