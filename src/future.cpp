@@ -27,8 +27,8 @@ SOFTWARE.
 #include <cstdio>
 
 fut::Base::~Base() {
-    if (auto notif = notify.exchange(nullptr)) {
-        notif(this, false);
+    if (notify) {
+        notify(this, false);
     }
     while (chain && chain->_refs.load(std::memory_order_acquire) == 1) {
         auto next = std::move(chain->chain);
@@ -38,17 +38,24 @@ fut::Base::~Base() {
 }
 
 namespace {
+// Carries a claimed continuation onto an Executor. If the executor drops the
+// job (Cancel) instead of running it, the destructor still cleans up the
+// type-erased functor via notif(self, false).
 struct NotifyCtx {
     fut::Base::Notify notif;
     rc::Strong<fut::Base> data;
+    rc::Strong<fut::Base> chain;
 
-    NotifyCtx(fut::Base::Notify notif, rc::Strong<fut::Base> data) noexcept :
-        notif(notif), data(data)
+    NotifyCtx(fut::Base::Notify notif,
+              rc::Strong<fut::Base> data,
+              rc::Strong<fut::Base> chain) noexcept :
+        notif(notif), data(std::move(data)), chain(std::move(chain))
     {}
-    NotifyCtx(const NotifyCtx&) noexcept = delete;
+    NotifyCtx(const NotifyCtx&) = delete;
     NotifyCtx(NotifyCtx&& o) noexcept :
         notif(std::exchange(o.notif, nullptr)),
-        data(std::exchange(o.data, nullptr))
+        data(std::move(o.data)),
+        chain(std::move(o.chain))
     {}
 
     ~NotifyCtx() {
@@ -57,38 +64,40 @@ struct NotifyCtx {
 };
 }
 
-void fut::d::continueChain(rc::Strong<Base> data, bool once) noexcept
+void fut::d::continueChain(rc::Strong<Base> data) noexcept
 {
-    do {
-        auto fs = data->flags.load(std::memory_order_acquire);
-        if (!(fs & Base::fullfilled) || fs & Base::in_continue) {
-            break;
-        }
-        auto notif = data->notify.exchange(nullptr);
-        if (!notif) {
-            break;
-        }
-        auto exec = data->exec;
-        if (exec) {
-            data->flags.fetch_or(Base::in_continue);
-            auto status = exec->Execute([ctx = NotifyCtx{notif, data}]() mutable {
-                auto n = std::exchange(ctx.notif, nullptr);
-                auto d = std::exchange(ctx.data, nullptr);
-                assert(n && d && "Executor::Job executed more than once");
-                n(d.get(), true);
-            });
-            data->flags.fetch_and(~Base::in_continue);
-            if (status != Executor::Done) {
-                break; // Stop chain
+    while (data) {
+        Base::Notify notif = nullptr;
+        rc::Strong<Executor> exec;
+        rc::Strong<Base> chain;
+        {
+            std::lock_guard<std::mutex> lk(data->mtx);
+            if (!(data->flags & Base::fullfilled)) {
+                return; // not resolved yet: the producer will drive us later
             }
-        } else {
-            data->flags.fetch_or(Base::in_continue);
-            notif(data.get(), true);
-            data->flags.fetch_and(~Base::in_continue);
+            notif = data->notify;
+            if (!notif) {
+                return; // no continuation, or another thread already claimed it
+            }
+            data->notify = nullptr;
+            exec = data->exec;
+            chain = data->chain;
         }
-        auto ch = std::move(data->chain);
-        data = std::move(ch);
-    } while(data && !once);
+        if (exec) {
+            exec->Execute([ctx = NotifyCtx{notif, std::move(data), std::move(chain)}]() mutable {
+                auto n = std::exchange(ctx.notif, nullptr);
+                auto self = std::move(ctx.data);
+                auto next = std::move(ctx.chain);
+                n(self.get(), true);
+                continueChain(std::move(next));
+            });
+            // Done: ran inline (and continued the chain). Defer: will run later.
+            // Cancel: dropped, NotifyCtx cleaned it up. In all cases we are done.
+            return;
+        }
+        notif(data.get(), true);
+        data = std::move(chain);
+    }
 }
 
 fut::Future<void> fut::Resolved() {

@@ -53,6 +53,13 @@ do_register(rpcxx-json-test rpcxx/json_test.cpp)
 do_register(rpcxx-msgpack-test rpcxx/msgpack_test.cpp)
 do_register(rpcxx-future-test rpcxx/future_test.cpp)
 
+# Threading stress test: deliberately lightweight (links only rpcxx-future)
+# so it can be rebuilt quickly under TSAN (-DRPCXX_TEST_TSAN=ON).
+add_executable(rpcxx-future-race-test rpcxx/future_race_test.cpp)
+target_link_libraries(rpcxx-future-race-test PRIVATE
+    rpcxx-future doctest Threads::Threads)
+add_test(NAME rpcxx-future-race-test COMMAND $<TARGET_FILE:rpcxx-future-race-test>)
+
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(rpcxx-test-deps INTERFACE -ftime-trace)
 

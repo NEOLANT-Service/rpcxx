@@ -27,6 +27,8 @@ SOFTWARE.
 
 #include <cassert>
 #include <atomic>
+#include <mutex>
+#include <new>
 #include <stdexcept>
 #include "executor.hpp"
 #include "rc/rc.hpp"
@@ -57,7 +59,6 @@ struct Base {
         fullfilled      = 1 << 0,
         has_val         = 1 << 1,
         future_taken    = 1 << 2,
-        in_continue     = 1 << 3,
     };
     using Notify = void(*)(Base* self, bool call);
     using Deleter = void(*)(Base* self);
@@ -69,13 +70,14 @@ struct Base {
     template<typename T> static void DeleterFor(Base* s);
 
     Deleter deleter = nullptr;
+    std::mutex mtx;
     rc::Strong<Executor> exec = nullptr;
     rc::Strong<Base> chain = nullptr;
-    std::atomic<Notify> notify{nullptr};
+    Notify notify = nullptr;
     void* ctx = nullptr;
     std::exception_ptr exc = nullptr;
-    std::atomic<short> flags = 0;
-    std::atomic<short> promises = 0;
+    short flags = 0;                  // guarded by mtx
+    std::atomic<short> promises{0};
     std::atomic<int> _refs{0};
 };
 
@@ -89,13 +91,7 @@ struct Data final : Base {
     Data() noexcept : Base(DeleterFor<T>) {}
     alignas(T) char buff[sizeof(T)];
     T* data() noexcept {
-        assert(flags & has_val);
         return std::launder(reinterpret_cast<T*>(buff));
-    }
-    void set_value(T&& v) noexcept {
-        [[maybe_unused]] auto was = flags.fetch_or(has_val, std::memory_order_release);
-        assert(!(was & has_val));
-        new (data()) T{std::move(v)};
     }
     ~Data() {
         if (flags & has_val) {
@@ -158,7 +154,7 @@ template<typename T>
 struct Promise;
 
 namespace d {
-void continueChain(rc::Strong<Base> data, bool once = false) noexcept;
+void continueChain(rc::Strong<Base> data) noexcept;
 template<typename T> struct strip_fut {using type = T;};
 template<typename T> struct strip_fut<Future<T>> {using type = T;};
 template<typename T, typename Fn> struct GetRet {
@@ -175,6 +171,30 @@ template<typename Fn, typename T>
 void notifyLastImpl(Base* self, bool call) noexcept;
 template<typename Fn, typename T>
 void notifyTryImpl(Base* self, bool call) noexcept;
+
+// Store the result + raise `fullfilled` under the state's lock. Returns true if
+// this call was the one that fulfilled the state (i.e. it was pending before).
+inline bool fulfilExc(Base* d, std::exception_ptr e) noexcept {
+    std::lock_guard<std::mutex> lk(d->mtx);
+    if (d->flags & Base::fullfilled) return false;
+    d->exc = std::move(e);
+    d->flags |= Base::fullfilled;
+    return true;
+}
+inline bool fulfilVoid(Base* d) noexcept {
+    std::lock_guard<std::mutex> lk(d->mtx);
+    if (d->flags & Base::fullfilled) return false;
+    d->flags |= Base::fullfilled;
+    return true;
+}
+template<typename T, typename U>
+bool fulfilValue(Data<T>* d, U&& v) {
+    std::lock_guard<std::mutex> lk(d->mtx);
+    if (d->flags & Base::fullfilled) return false;
+    new (d->buff) T{std::forward<U>(v)};
+    d->flags |= Base::fullfilled | Base::has_val;
+    return true;
+}
 } //detail
 
 template<typename T>
@@ -213,15 +233,11 @@ struct [[nodiscard]] Future {
     }
     template<typename Fn, typename = IfValidThen<Fn>>
     auto Then(rc::Strong<Executor> exec, Fn f) {
-        Data<T>& data = check();
         using Ret = d::GetRet<T, Fn>;
-        rc::Strong chain = new Data<typename Ret::strip>;
-        data.chain = chain;
-        data.exec = exec;
-        data.ctx = new Fn{std::move(f)};
-        data.notify.store(d::notifyImpl<Fn, T>, std::memory_order_release);
-        d::continueChain(TakeState());
-        return Future<typename Ret::strip>(chain);
+        using Next = typename Ret::strip;
+        rc::Strong<Data<Next>> chain = new Data<Next>;
+        install(std::move(exec), &d::notifyImpl<Fn, T>, chain, std::move(f));
+        return Future<Next>(chain);
     }
     template<typename Fn, typename = IfValidThen<Fn>>
     auto ThenSync(Fn f) {
@@ -229,15 +245,11 @@ struct [[nodiscard]] Future {
     }
     template<typename Fn, typename = IfValidTryOrLast<Fn>>
     auto Try(rc::Strong<Executor> exec, Fn f) {
-        Data<T>& data = check();
         using Ret = d::GetRet<Result<T>, Fn>;
-        rc::Strong chain = new Data<typename Ret::strip>;
-        data.chain = chain;
-        data.exec = exec;
-        data.ctx = new Fn{std::move(f)};
-        data.notify.store(d::notifyTryImpl<Fn, T>, std::memory_order_release);
-        d::continueChain(TakeState());
-        return Future<typename Ret::strip>(chain);
+        using Next = typename Ret::strip;
+        rc::Strong<Data<Next>> chain = new Data<Next>;
+        install(std::move(exec), &d::notifyTryImpl<Fn, T>, chain, std::move(f));
+        return Future<Next>(chain);
     }
     template<typename Fn, typename = IfValidTryOrLast<Fn>>
     auto TrySync(Fn f) {
@@ -245,11 +257,7 @@ struct [[nodiscard]] Future {
     }
     template<typename Fn, typename = IfValidTryOrLast<Fn>>
     void AtLast(rc::Strong<Executor> exec, Fn f) {
-        Data<T>& data = check();
-        data.exec = exec;
-        data.ctx = new Fn{std::move(f)};
-        data.notify.store(d::notifyLastImpl<Fn, T>, std::memory_order_release);
-        d::continueChain(TakeState());
+        install(std::move(exec), &d::notifyLastImpl<Fn, T>, nullptr, std::move(f));
     }
     template<typename Fn, typename = IfValidTryOrLast<Fn>>
     void AtLastSync(Fn f) {
@@ -268,14 +276,25 @@ struct [[nodiscard]] Future {
         Catch(nullptr, std::move(f));
     }
 protected:
-    Data<T>& check() {
-        if (!PeekState()) {
-            throw FutureError("Invalid Future");
+    // Publish a continuation onto the state under the lock and then drive it.
+    template<typename Fn>
+    void install(rc::Strong<Executor> exec, Base::Notify n,
+                 rc::Strong<Base> chain, Fn f) {
+        Data<T>* sp = PeekState();
+        if (!sp) throw FutureError("Invalid Future");
+        auto* fctx = new Fn{std::move(f)};
+        {
+            std::lock_guard<std::mutex> lk(sp->mtx);
+            if (sp->notify) {
+                delete fctx;
+                throw FutureError("Then() Called Twice");
+            }
+            sp->exec = std::move(exec);
+            sp->chain = std::move(chain);
+            sp->ctx = fctx;
+            sp->notify = n;
         }
-        Data<T>& data = *PeekState();
-        // TODO: ?? checks?
-        if (data.notify.load(std::memory_order_acquire)) throw FutureError("Then() Called Twice");
-        return data;
+        d::continueChain(TakeState());
     }
 
     StatePtr<T> state;
@@ -290,7 +309,9 @@ struct [[nodiscard]] SharedPromise {
         ref();
     }
     bool IsValid() const noexcept {
-        return state && !(state->flags & Base::fullfilled);
+        if (!state) return false;
+        std::lock_guard<std::mutex> lk(state->mtx);
+        return !(state->flags & Base::fullfilled);
     }
     bool operator()(Result<T> res) const {
         if (auto ptr = res.get_ptr()) {
@@ -305,11 +326,9 @@ struct [[nodiscard]] SharedPromise {
     }
     bool operator()(std::exception_ptr exc) const {
         if (!state) throw FutureError("Invalid Promise");
-        Data<T>& data = *state;
-        auto was = data.flags.fetch_or(Base::fullfilled, std::memory_order_acq_rel);
-        data.exc = std::move(exc);
+        bool first = d::fulfilExc(state.get(), std::move(exc));
         d::continueChain(state.get());
-        return !(was & Base::fullfilled);
+        return first;
     }
     template<typename E, if_exception<E, true> = 1>
     bool operator()(E exc) const {
@@ -318,22 +337,16 @@ struct [[nodiscard]] SharedPromise {
     bool operator()() const {
         static_assert(std::is_void_v<T>);
         if (!state) throw FutureError("Invalid Promise");
-        Data<T>& data = *state;
-        auto was = data.flags.fetch_or(Base::fullfilled, std::memory_order_acq_rel);
+        bool first = d::fulfilVoid(state.get());
         d::continueChain(state.get());
-        return !(was & Base::fullfilled);
+        return first;
     }
     template<typename U, if_exception<U, false> = 1>
     bool operator()(U && value) const {
         if (!state) throw FutureError("Invalid Promise");
-        Data<T>& data = *state;
-        auto was = data.flags.fetch_or(Base::fullfilled | Base::has_val,
-                                       std::memory_order_acq_rel);
-        if (was & Base::fullfilled) return false;
-        assert(!(was & Base::has_val));
-        new (data.data()) T{std::forward<U>(value)};
+        bool first = d::fulfilValue(state.get(), std::forward<U>(value));
         d::continueChain(state.get());
-        return true;
+        return first;
     }
     SharedPromise(SharedPromise const & p) noexcept {
         state = p.state;
@@ -345,8 +358,11 @@ struct [[nodiscard]] SharedPromise {
     Future<T> GetFuture() {
         if (!state) throw FutureError("Invalid Promise");
         Data<T>& data = *state;
-        auto was = data.flags.fetch_or(Base::future_taken, std::memory_order_acq_rel);
-        if (was & Base::future_taken) throw FutureError("Future already taken");
+        {
+            std::lock_guard<std::mutex> lk(data.mtx);
+            if (data.flags & Base::future_taken) throw FutureError("Future already taken");
+            data.flags |= Base::future_taken;
+        }
         return {state};
     }
     SharedPromise& operator=(SharedPromise const & p) noexcept {
@@ -367,14 +383,18 @@ struct [[nodiscard]] SharedPromise {
 protected:
     void ref() noexcept {
         if (Data<T>* d = state.get()) {
-            d->promises.fetch_add(1, std::memory_order_release);
+            d->promises.fetch_add(1, std::memory_order_relaxed);
         }
     }
     void deref() noexcept {
         if (Data<T>* d = state.get()) {
-            if (d->promises.fetch_sub(1, std::memory_order_acquire) == 1) {
-                auto f = d->flags.load(std::memory_order_acquire);
-                if (!(f & Base::fullfilled)) {
+            if (d->promises.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                bool done;
+                {
+                    std::lock_guard<std::mutex> lk(d->mtx);
+                    done = d->flags & Base::fullfilled;
+                }
+                if (!done) {
                     (*this)(FutureError("Broken Promise"));
                 }
             }
@@ -419,37 +439,26 @@ Future<T> Resolved(T value) {
 
 namespace d {
 
-inline void fullfill(Base* d) {
-    [[maybe_unused]] auto was = d->flags.fetch_or(Base::fullfilled);
-    assert(!(was & Base::fullfilled));
-}
-
 template<typename T>
 inline Result<T> getRes(Base* d) noexcept {
     return d->exc ? Result<T>(d->exc) : Result<T>(static_cast<Data<T>*>(d)->data());
 }
 
-inline bool needContinue(Base* d) noexcept {
-    return !(d->flags.load(std::memory_order_acquire) & Base::in_continue);
-}
-
+// Move the resolved result of `self` into its `chain` and fulfil the chain.
+// Used to splice a future returned from a continuation into the existing chain.
 template<typename strip>
 void notifyForward(Base* _self, bool call) {
     auto* self = static_cast<Data<strip>*>(_self);
-    auto* chain = static_cast<Data<strip>*>(self->chain.get());
     if (call) {
+        auto* chain = static_cast<Data<strip>*>(self->chain.get());
         assert(chain);
         assert(self->flags & Base::fullfilled);
         if (self->exc) {
-            chain->exc = std::move(self->exc);
+            fulfilExc(chain, std::move(self->exc));
+        } else if constexpr (!std::is_void_v<strip>) {
+            fulfilValue(chain, std::move(*self->data()));
         } else {
-            if constexpr (!std::is_void_v<strip>) {
-                chain->set_value(std::move(*self->data()));
-            }
-        }
-        fullfill(chain);
-        if (needContinue(self)) {
-            continueChain(chain);
+            fulfilVoid(chain);
         }
     }
 }
@@ -463,13 +472,13 @@ void setResult(rc::Strong<Base>& chain, Fn& fn, Result<T> res) noexcept try {
     [[maybe_unused]] Data<strip>* next = static_cast<Data<strip>*>(chain.get());
     if constexpr (unpack) {
         if (!res) {
-            chain->exc = std::move(res).get_exception();
-            fullfill(chain.get());
+            fulfilExc(chain.get(), std::move(res).get_exception());
             return;
         }
     }
     if constexpr (is_future_returned) {
-        // attach received future as parent
+        // attach received future as parent: when it resolves, notifyForward
+        // splices its result into our chain.
         Future<strip> fut(nullptr);
         if constexpr (unpack && std::is_void_v<T>) {
             fut = fn();
@@ -479,19 +488,21 @@ void setResult(rc::Strong<Base>& chain, Fn& fn, Result<T> res) noexcept try {
             fut = fn(std::move(res));
         }
         Data<strip>* parent = fut.PeekState();
-        parent->chain = chain;
-        parent->notify.store(notifyForward<strip>, std::memory_order_release);
-        continueChain(parent, true); //once. if set -> sets chain -> we continue it
+        {
+            std::lock_guard<std::mutex> lk(parent->mtx);
+            parent->chain = chain;
+            parent->notify = notifyForward<strip>;
+        }
+        continueChain(parent);
     } else if constexpr (!std::is_void_v<type>) {
         // next future result set from f()
         if constexpr (unpack && std::is_void_v<T>) {
-            next->set_value(fn());
+            fulfilValue(next, fn());
         } else if constexpr (unpack) {
-            next->set_value(fn(res.get()));
+            fulfilValue(next, fn(res.get()));
         } else {
-            next->set_value(fn(std::move(res)));
+            fulfilValue(next, fn(std::move(res)));
         }
-        fullfill(next);
     } else {
         // next future is void
         if constexpr (unpack && std::is_void_v<T>) {
@@ -501,11 +512,10 @@ void setResult(rc::Strong<Base>& chain, Fn& fn, Result<T> res) noexcept try {
         } else {
             fn(std::move(res));
         }
-        fullfill(next);
+        fulfilVoid(next);
     }
 } catch (...) {
-    chain->exc = std::current_exception();
-    fullfill(chain.get());
+    fulfilExc(chain.get(), std::current_exception());
 }
 
 [[noreturn]] void onLastExc();
@@ -539,9 +549,6 @@ void d::notifyImpl(Base* self, bool call) noexcept {
         assert(self->flags & Base::fullfilled);
         assert(self->chain);
         setResult<true>(self->chain, *fn, getRes<T>(self));
-        if (needContinue(self)) {
-            continueChain(self->chain);
-        }
     }
     delete fn;
 }
@@ -553,9 +560,6 @@ void d::notifyTryImpl(Base* self, bool call) noexcept {
         assert(self->flags & Base::fullfilled);
         assert(self->chain);
         setResult<false>(self->chain, *fn, getRes<T>(self));
-        if (needContinue(self)) {
-            continueChain(self->chain);
-        }
     }
     delete fn;
 }
