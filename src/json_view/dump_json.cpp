@@ -103,10 +103,6 @@ static void visit(JsonView json, unsigned depth, Writer& wr) {
         wr.DoRawNumber(buff, ptr);
         break;
     }
-    case t_null: {
-        wr.Null();
-        break;
-    }
     case t_string: {
         auto str = json.GetStringUnsafe();
         if (auto s = str.data()) {
@@ -120,7 +116,9 @@ static void visit(JsonView json, unsigned depth, Writer& wr) {
         wr.Bool(json.GetUnsafe().d.boolean);
         break;
     }
-    default: {
+    default:
+    case t_null: {
+        wr.Null();
         break;
     }
     }
