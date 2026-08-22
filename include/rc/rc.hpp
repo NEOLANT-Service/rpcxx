@@ -27,10 +27,13 @@ SOFTWARE.
 
 #include <atomic>
 #include <cstddef>
+#include <type_traits>
 #include <utility>
 
 namespace rc
 {
+
+struct WeakableVirtual;
 
 template<typename T>
 struct Strong {
@@ -87,7 +90,11 @@ struct DefaultBase {
     friend void AddRef(DefaultBase* d) noexcept {
         d->_refs.fetch_add(1, std::memory_order_acq_rel);
     }
-    template<typename T>
+    // Excluded for WeakableVirtual-derived types: those must go through
+    // WeakableVirtual's own Unref, which invalidates the weak block under
+    // its spinlock before deleting. (A plain template here is an exact match
+    // in overload resolution and would silently shadow the weakable path.)
+    template<typename T, std::enable_if_t<!std::is_base_of_v<WeakableVirtual, T>, int> = 0>
     friend void Unref(T* d) noexcept {
         if (d->_refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             delete d;
@@ -123,15 +130,28 @@ inline static void _unlock(std::atomic_bool& lock) {
 
 struct WeakableVirtual : VirtualBase {
     friend void Unref(WeakableVirtual* d) noexcept {
-        _lock(d->_block->_sync);
-        if (d->_refs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            if (d->_block) {
-                d->_block->data.store(nullptr, std::memory_order_release);
-            }
-            _unlock(d->_block->_sync);
+        // _sync serializes against GetWeak()/_make() (which lazily creates
+        // _block); block->_sync serializes the refcount-to-zero decision
+        // against Weak::lock(), which holds block->_sync across its
+        // load+AddRef. Lock order is always _sync -> block->_sync.
+        _lock(d->_sync);
+        auto* block = d->_block.get();
+        if (block) {
+            _lock(block->_sync);
+        }
+        bool last = d->_refs.fetch_sub(1, std::memory_order_acq_rel) == 1;
+        if (last && block) {
+            // Invalidate the weak block BEFORE delete, still under the
+            // spinlock: a concurrent Weak::lock() either AddRef'ed first
+            // (so `last` is false) or observes nullptr from here on.
+            block->data.store(nullptr, std::memory_order_release);
+        }
+        if (block) {
+            _unlock(block->_sync);
+        }
+        _unlock(d->_sync);
+        if (last) {
             delete d;
-        } else {
-            _unlock(d->_block->_sync);
         }
     }
     template<typename T>
@@ -178,12 +198,19 @@ struct Weak {
 
     T* peek() const noexcept {
         if (!block) return nullptr;
-        return reinterpret_cast<T*>(block->data.load(std::memory_order_acquire) + offset);
+        // After expiry data is nullptr; adding offset to it would produce a
+        // garbage non-null pointer for non-zero offsets (multiple/virtual
+        // inheritance), so null-check BEFORE applying the offset.
+        char* p = block->data.load(std::memory_order_acquire);
+        return p ? reinterpret_cast<T*>(p + offset) : nullptr;
     }
     Strong<T> lock() const noexcept {
         if (!block) return nullptr;
         _lock(block->_sync);
-        Strong<T> r = reinterpret_cast<T*>(block->data.load(std::memory_order_acquire) + offset);
+        // The spinlock makes load+AddRef atomic w.r.t. WeakableVirtual::Unref
+        // reaching zero: an object whose block was nulled stays dead.
+        char* p = block->data.load(std::memory_order_acquire);
+        Strong<T> r = p ? reinterpret_cast<T*>(p + offset) : nullptr;
         _unlock(block->_sync);
         return r;
     }
