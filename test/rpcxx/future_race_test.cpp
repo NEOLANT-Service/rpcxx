@@ -28,6 +28,8 @@ SOFTWARE.
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest/doctest.h"
 #include "future/future.hpp"
+#include "future/multi_future.hpp"
+#include "future/cancel_token.hpp"
 #include "future/to_std_fut.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -207,6 +209,76 @@ TEST_CASE("race: chain through deferred executor") {
         CHECK(res == "4");
     }
     pool->Stop();
+}
+
+TEST_CASE("race: MultiFuture resolve vs GetFuture attach") {
+    for (int i = 0; i < kIters / 2; ++i) {
+        Promise<int> prom;
+        MultiFuture<int> mf(prom.GetFuture());
+        StartGate gate;
+        std::atomic<int> resolved{0};
+        std::thread resolver([&, prom = std::move(prom)]() mutable {
+            gate.arrive_and_wait(2);
+            prom(42);
+        });
+        std::thread consumer([&]{
+            gate.arrive_and_wait(2);
+            for (int j = 0; j < 20; ++j) {
+                mf.GetFuture().AtLastSync([&](Result<int> r){
+                    try {
+                        if (r.get() == 42) resolved++;
+                    } catch (...) {}
+                });
+            }
+        });
+        resolver.join();
+        consumer.join();
+        // late subscriber must still receive the published value
+        int late = 0;
+        mf.GetFuture().AtLastSync([&](Result<int> r){ late = r.get(); });
+        CHECK(late == 42);
+        CHECK(resolved.load() == 20);
+    }
+}
+
+TEST_CASE("MultiFuture: reentrant GetFuture from continuation") {
+    Promise<int> prom;
+    MultiFuture<int> mf(prom.GetFuture());
+    int count = 0;
+    mf.GetFuture().AtLastSync([&](Result<int> r){
+        if (r) count++;
+        // re-enter while the first batch of waiters is being resolved
+        mf.GetFuture().AtLastSync([&](Result<int> r2){ if (r2) count++; });
+    });
+    mf.GetFuture().AtLastSync([&](Result<int> r){ if (r) count++; });
+    prom(7);
+    CHECK(count == 3);
+}
+
+TEST_CASE("race: CancelController cancel vs OnCancel subscribe") {
+    for (int i = 0; i < kIters / 4; ++i) {
+        CancelController ctrl;
+        auto sig = ctrl.Signal();
+        StartGate gate;
+        std::atomic<int> fired{0};
+        std::thread canceller([&, ctrl = std::move(ctrl)]() mutable {
+            gate.arrive_and_wait(2);
+            ctrl("stop");
+        });
+        std::thread subscriber([&]{
+            gate.arrive_and_wait(2);
+            for (int j = 0; j < 10; ++j) {
+                sig.OnCancel([&]{ fired++; });
+            }
+        });
+        canceller.join();
+        subscriber.join();
+        // subscriptions after cancellation still fire (MultiFuture replays)
+        for (int j = 0; j < 5; ++j) {
+            sig.OnCancel([&]{ fired++; });
+        }
+        CHECK(fired.load() == 15);
+    }
 }
 
 TEST_CASE("race: future-returning continuation across threads") {

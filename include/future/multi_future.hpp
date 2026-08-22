@@ -26,16 +26,21 @@ SOFTWARE.
 #define FUT_MULTI_FUT_HPP
 
 #include "future.hpp"
+#include <mutex>
 #include <vector>
 
 namespace fut {
 
+// All fields except `mut` are guarded by `mut`. Once `done` is set to true
+// (under the lock), `exc`/`buff` are never modified again, so after observing
+// done==true under the lock they may safely be read without it.
 template<typename T>
 struct MultiState : rc::DefaultBase {
+    std::mutex mut;
     bool done = false;
     alignas(T) char buff[sizeof(T)];
     std::exception_ptr exc;
-    std::vector<Promise<T>> proms;
+    std::vector<SharedPromise<T>> proms;
     ~MultiState() {
         if (done && !exc) {
             std::launder(reinterpret_cast<T*>(buff))->~T();
@@ -45,9 +50,10 @@ struct MultiState : rc::DefaultBase {
 
 template<>
 struct MultiState<void> : rc::DefaultBase {
+    std::mutex mut;
     bool done = false;
     std::exception_ptr exc;
-    std::vector<Promise<void>> proms;
+    std::vector<SharedPromise<void>> proms;
 };
 
 template<typename T>
@@ -55,15 +61,22 @@ struct MultiFuture {
     MultiFuture() noexcept = default;
     MultiFuture(Future<T> fut) : state(new MultiState<T>) {
         fut.AtLastSync([state = state](auto res) noexcept {
-            state->done = true;
-            if (!res) {
-                state->exc = std::move(res).get_exception();
-            } else {
-                if constexpr (!std::is_void_v<T>) {
-                    new (state->buff) T{res.get()};
+            std::vector<SharedPromise<T>> waiters;
+            {
+                std::lock_guard lk(state->mut);
+                if (!res) {
+                    state->exc = std::move(res).get_exception();
+                } else {
+                    if constexpr (!std::is_void_v<T>) {
+                        new (state->buff) T{res.get()};
+                    }
                 }
+                state->done = true;
+                waiters.swap(state->proms);
             }
-            for (auto& p: state->proms) {
+            // Resolve outside the lock: continuations run inline from here and
+            // may re-enter GetFuture() on this same MultiFuture.
+            for (auto& p: waiters) {
                 tryRes(*state, p);
             }
         });
@@ -87,14 +100,26 @@ struct MultiFuture {
         return prom().GetFuture();
     }
 protected:
-    auto& prom() {
+    Promise<T> prom() {
         if (!state) throw FutureError("Invalid Multi Future");
-        auto& p = state->proms.emplace_back();
-        tryRes(*state, p);
+        Promise<T> p;
+        bool ready;
+        {
+            std::lock_guard lk(state->mut);
+            ready = state->done;
+            if (!ready) {
+                state->proms.push_back(SharedPromise<T>(p));
+            }
+        }
+        // done was published under the lock, so exc/buff are stable here.
+        // Resolve outside the lock (continuations may run inline).
+        if (ready) {
+            tryRes(*state, p);
+        }
         return p;
     }
-    static void tryRes(MultiState<T>& state, Promise<T>& p) {
-        if (!state.done) return;
+    // Precondition: state.done == true (published under state.mut).
+    static void tryRes(MultiState<T>& state, SharedPromise<T>& p) {
         if (state.exc) {
             p(state.exc);
         } else {
