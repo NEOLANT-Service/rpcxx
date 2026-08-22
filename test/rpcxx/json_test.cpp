@@ -410,3 +410,85 @@ TEST_CASE("serialize")
     }
 }
 
+
+struct TupleIndexed {
+    int a;
+    int b;
+};
+
+DESCRIBE("TupleIndexed", TupleIndexed, StructAsTuple) {
+    MEMBER("a", &_::a, FieldIndex<2>);
+    MEMBER("b", &_::b);
+}
+
+TEST_CASE("ub regressions")
+{
+    SUBCASE("MutableJson bool ctor writes the boolean member") {
+        DefaultArena alloc;
+        MutableJson t(true);
+        CHECK(t.View(alloc).Get<bool>() == true);
+        MutableJson f(false);
+        CHECK(f.View(alloc).Get<bool>() == false);
+    }
+    SUBCASE("MutableJson binary deep copy") {
+        MutableJson orig(MutableJson::Binary{'a', 'b', 'c'});
+        auto cp = orig.Copy();
+        DefaultArena alloc;
+        CHECK(cp.View(alloc).GetBinary() == string_view("abc", 3));
+    }
+    SUBCASE("Copy honors NoCopyBinary / combined flags") {
+        DefaultArena alloc;
+        auto src = JsonView::Binary(string_view("\x01\x02\x03", 3));
+        auto plain = Copy(src, alloc);
+        CHECK(plain.GetBinary().data() != src.GetBinary().data());
+        auto noBin = Copy(src, alloc, JV_DEFAULT_DEPTH, NoCopyBinary);
+        CHECK(noBin.GetBinary().data() == src.GetBinary().data());
+        auto noStr = Copy(src, alloc, JV_DEFAULT_DEPTH, NoCopyStrings);
+        CHECK(noStr.GetBinary().data() != src.GetBinary().data());
+        auto neither = Copy(src, alloc, JV_DEFAULT_DEPTH, NoCopyStrings | NoCopyBinary);
+        CHECK(neither.GetBinary().data() == src.GetBinary().data());
+    }
+    SUBCASE("StructAsTuple with explicit FieldIndex sizes the array") {
+        DefaultArena alloc;
+        auto v = JsonView::From(TupleIndexed{5, 6}, alloc);
+        auto arr = v.Array();
+        CHECK(arr.size() == 3);
+        CHECK(arr.begin()[2].Get<int>() == 5);
+        CHECK(arr.begin()[1].Get<int>() == 6);
+        // and it round-trips
+        TupleIndexed back{};
+        v.GetTo(back, {});
+        CHECK(back.a == 5);
+        CHECK(back.b == 6);
+    }
+    SUBCASE("membuff In::Read across refill boundaries") {
+        struct ShortReads : membuff::In {
+            std::string data;
+            size_t pos = 0;
+            size_t chunk;
+            ShortReads(std::string d, size_t c) : data(std::move(d)), chunk(c) {}
+            void Refill(size_t) override {
+                auto n = std::min(data.size() - pos, chunk);
+                buffer = data.data() + pos;
+                capacity = n;
+                pos += n;
+            }
+        };
+        std::string payload(5000, '\0');
+        for (size_t i = 0; i < payload.size(); ++i) payload[i] = char('a' + i % 26);
+        ShortReads in(payload, 7);
+        std::string out(5000, '\0');
+        CHECK(in.Read(out.data(), out.size()) == 5000);
+        CHECK(out == payload);
+        // ReadByte across refills
+        ShortReads in2(payload, 3);
+        std::string out2;
+        for (size_t i = 0; i < payload.size(); ++i) out2 += in2.ReadByte();
+        CHECK(out2 == payload);
+    }
+    SUBCASE("membuff StringOut regrows from zero capacity") {
+        membuff::StringOut out(0);
+        out.Write("abc", 3);
+        CHECK(out.Consume() == "abc");
+    }
+}

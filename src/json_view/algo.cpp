@@ -48,7 +48,7 @@ JsonView doCopy(JsonView src, Arena& alloc, unsigned int depth) {
     DepthError::Check(depth--);
     switch (src.GetType()) {
     case t_binary: {
-        if (flags & NoCopyStrings) {
+        if (flags & NoCopyBinary) {
             return src;
         } else {
             return JsonView::Binary(CopyString(src.GetBinary(), alloc));
@@ -96,6 +96,9 @@ JsonView jv::Copy(JsonView src, Arena& alloc, unsigned int depth, unsigned flags
     }
     case NoCopyBinary: {
         return doCopy<NoCopyBinary>(src, alloc, depth);
+    }
+    case NoCopyStrings | NoCopyBinary: {
+        return doCopy<NoCopyStrings | NoCopyBinary>(src, alloc, depth);
     }
     default: {
         return doCopy<0>(src, alloc, depth);

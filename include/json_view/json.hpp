@@ -154,7 +154,7 @@ struct BasicMutJson {
     BasicMutJson(std::nullptr_t) noexcept : BasicMutJson(t_null) {}
     explicit BasicMutJson(bool boolean) noexcept {
         data.type = t_boolean;
-        data.number = boolean;
+        data.boolean = boolean;
     }
     bool& GetBool(TraceFrame const& frame = {}) {
         AssertType(t_boolean, frame);
@@ -586,7 +586,7 @@ void BasicMutJson<Config>::copy(BasicMutJson &to, const BasicMutJson &from, unsi
         break;
     }
     case t_binary: {
-        *to.data.str = *from.data.str;
+        *to.data.bin = *from.data.bin;
         break;
     }
     default: {

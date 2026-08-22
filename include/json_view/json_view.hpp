@@ -982,8 +982,9 @@ constexpr unsigned maxIdxFor() {
             using F = decltype(f);
             using Explicit = describe::extract_t<FieldIndexBase, F>;
             if constexpr (!std::is_void_v<Explicit>) {
-                if (Explicit::value > result) {
-                    result = Explicit::value;
+                // indices are 0-based: an explicit index N needs size N + 1
+                if (Explicit::value >= result) {
+                    result = Explicit::value + 1;
                 }
             }
         }
@@ -1001,8 +1002,10 @@ JsonView serializeAsTuple(const T &value, Arena &alloc)
     desc.for_each([&](auto f){
         if constexpr (f.is_field) {
             using F = decltype(f);
-            constexpr auto manual = getIdxFor<F>();
-            auto idx = manual ? manual : count;
+            // FieldIndex<0> is a valid explicit index - check for the
+            // attribute's presence, not the index's truthiness.
+            constexpr bool manual = !std::is_void_v<describe::extract_t<FieldIndexBase, F>>;
+            auto idx = manual ? getIdxFor<F>() : count;
             arr[idx] = JsonView::From(f.get(value), alloc);
             count++;
         }

@@ -90,7 +90,9 @@ struct StringOut final: Out
         return std::move(out);
     }
     void Grow(size_t amount) override {
-        out.resize(out.size() + size_type(amount));
+        // Always make progress: Grow(0) happens when the buffer was never
+        // sized (or was Consumed), and Out::Write loops until space appears.
+        out.resize(out.size() + size_type(amount ? amount : 512));
         buffer = reinterpret_cast<char*>(out.data());
         capacity = size_t(out.size());
     }
@@ -212,6 +214,7 @@ inline char In::ReadByte(size_t growAmount)
 {
     LastError = 0;
     if (meta_Unlikely(ptr >= capacity)) {
+        ptr = 0; // Refill() replaces the whole buffer
         Refill(growAmount ? growAmount : capacity);
         if (!capacity) {
             return {};
@@ -229,6 +232,7 @@ inline size_t In::Read(char *buff, size_t size, size_t growAmount)
             if (auto av = Available()) {
                 ::memcpy(buff, buffer + ptr, av);
                 buff += av;
+                size -= av;
             }
             ptr = 0;
             Refill(growAmount ? growAmount : capacity);
