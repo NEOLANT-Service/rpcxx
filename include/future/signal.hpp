@@ -39,31 +39,40 @@ struct Signal {
         impl = new Impl;
     }
     bool Invoke(T value = {}) noexcept {
-        std::lock_guard lock(mut);
-        if (!impl->func) return false;
-        if (exec) {
-            exec->Execute([impl = impl, value = std::move(value)]() mutable {
-                impl->func(std::move(value));
+        // Snapshot the current callback + executor under the lock. A queued
+        // (deferred) invocation must not read impl->func later: it races with
+        // re-subscription swapping the MoveFunc.
+        std::shared_ptr<fut::MoveFunc<void(T)>> fn;
+        rc::Strong<Executor> ex;
+        {
+            std::lock_guard lock(mut);
+            fn = impl->func;
+            ex = exec;
+        }
+        if (!fn || !*fn) return false;
+        if (ex) {
+            ex->Execute([fn = std::move(fn), value = std::move(value)]() mutable {
+                (*fn)(std::move(value));
             });
         } else {
-            impl->func(std::move(value));
+            (*fn)(std::move(value));
         }
         return true;
     }
 
     void operator()(rc::Strong<Executor> _exec, fut::MoveFunc<void(T)> cb) {
         std::lock_guard lock(mut);
-        std::swap(cb, impl->func);
-        std::swap(_exec, this->exec);
+        impl->func = std::make_shared<fut::MoveFunc<void(T)>>(std::move(cb));
+        std::swap(_exec, exec);
     }
     void operator()(fut::MoveFunc<void(T)> cb) {
         std::lock_guard lock(mut);
-        std::swap(cb, impl->func);
-        this->exec = nullptr;
+        impl->func = std::make_shared<fut::MoveFunc<void(T)>>(std::move(cb));
+        exec = nullptr;
     }
 protected:
     struct Impl : rc::DefaultBase {
-        fut::MoveFunc<void(T)> func;
+        std::shared_ptr<fut::MoveFunc<void(T)>> func;
     };
     rc::Strong<Executor> exec;
     rc::Strong<Impl> impl;

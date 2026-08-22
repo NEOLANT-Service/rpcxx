@@ -30,6 +30,7 @@ SOFTWARE.
 #include "future/future.hpp"
 #include "future/multi_future.hpp"
 #include "future/cancel_token.hpp"
+#include "future/signal.hpp"
 #include "future/to_std_fut.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -278,6 +279,23 @@ TEST_CASE("race: CancelController cancel vs OnCancel subscribe") {
             sig.OnCancel([&]{ fired++; });
         }
         CHECK(fired.load() == 15);
+    }
+}
+
+TEST_CASE("race: Signal invoke on executor vs re-subscribe") {
+    for (int i = 0; i < 200; ++i) {
+        rc::Strong pool = new PoolExecutor(2);
+        Signal<int> sig;
+        sig(pool, [](int){});
+        std::thread invoker([&]{
+            for (int j = 0; j < 2000; ++j) sig.Invoke(j);
+        });
+        std::thread swapper([&]{
+            for (int j = 0; j < 500; ++j) sig(pool, [](int){});
+        });
+        invoker.join();
+        swapper.join();
+        pool->Stop();
     }
 }
 
