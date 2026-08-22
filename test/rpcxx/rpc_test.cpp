@@ -178,3 +178,41 @@ TEST_CASE("rpc") {
         }
     }
 }
+
+// Multiple client threads share one serialized transport while async handlers
+// resolve on their own threads and a timer thread pumps CheckTimeouts().
+// Stresses IAsyncTransport's pending-request map; run under TSAN.
+TEST_CASE("rpc: cross-thread transport stress") {
+    TestServer server;
+    extraMethods(server);
+    for (auto proto: {Protocol::json_v2_compliant, Protocol::json_v2_minified}) {
+        CAPTURE(PrintProto(proto));
+        rc::Strong<IClientTransport> send = new MockTransport(proto, &server);
+        auto* mock = static_cast<MockTransport*>(send.get());
+        mock->fmt = json;
+        std::atomic<bool> stop{false};
+        std::atomic<int> done{0};
+        std::thread timer([&]{
+            while (!stop.load(std::memory_order_acquire)) {
+                mock->CheckTimeouts();
+                std::this_thread::yield();
+            }
+        });
+        std::vector<std::thread> clients;
+        for (int t = 0; t < 4; ++t) {
+            clients.emplace_back([&]{
+                Client cli; // per-thread client, shared transport
+                cli.SetTransport(send);
+                for (int i = 0; i < 50; ++i) {
+                    CHECK(req<int>(cli, "add", 1, 2) == 3);
+                    CHECK(req<string>(cli, "async_ping", "ping") == "pong");
+                    done++;
+                }
+            });
+        }
+        for (auto& c: clients) c.join();
+        stop.store(true);
+        timer.join();
+        CHECK(done == 200);
+    }
+}

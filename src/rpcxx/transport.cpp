@@ -25,6 +25,7 @@ SOFTWARE.
 #include "rpcxx/transport.hpp"
 #include "json_view/dump.hpp"
 #include "rpcxx/protocol.hpp"
+#include <optional>
 #include <unordered_map>
 using namespace rpcxx;
 using namespace std::chrono;
@@ -42,16 +43,25 @@ static void error(string loc, std::exception& e) {
 }
 
 struct IAsyncTransport::Impl {
-    size_t id = 0;
+    std::atomic<size_t> id{0};
     Protocol proto = {};
+    std::mutex mut; // guards pending, handler, last
     std::unordered_map<size_t, Transact> pending;
     rc::Weak<IHandler> handler = nullptr;
     steady_clock::time_point last = steady_clock::now();
     rc::Strong<StoppableExecutor> exec = new StoppableExecutor;
 
     ~Impl() {
-        pending.clear();
+        // Quiesce in-flight sendResult/addBatchResp jobs first: they capture
+        // the transport as a raw pointer and must not run past destruction.
         exec->Stop();
+        decltype(pending) rest;
+        {
+            std::lock_guard lk(mut);
+            rest.swap(pending);
+        }
+        // Broken-promise rejection of still-pending requests happens here,
+        // outside the lock (continuations may re-enter the transport).
     }
 
     template<typename Fn>
@@ -91,7 +101,11 @@ struct IAsyncTransport::Impl {
     }
 
     IHandler* getHandler(IAsyncTransport* self) {
-        auto h = handler.peek();
+        IHandler* h;
+        {
+            std::lock_guard lk(mut);
+            h = handler.peek();
+        }
         if (meta_Unlikely(!h)) {
             self->NoServerFound();
             return nullptr;
@@ -130,6 +144,7 @@ struct IAsyncTransport::Impl {
     struct Batch : rc::DefaultBase {
         IAsyncTransport* self;
         size_t left;
+        std::mutex mut; // guards left + parts: parts complete on arbitrary threads
         std::vector<JsonView> parts;
         DefaultArena<1024> alloc;
 
@@ -138,30 +153,43 @@ struct IAsyncTransport::Impl {
         }
     };
 
-    template<Protocol proto>
-    static void addBatchResp(JsonView id, Batch& b, Result<JsonView> res) noexcept try {
-        Formatter<proto> fmt;
-        JsonView part;
-        try {
-            part = Copy(fmt.MakeResponce(id, res.get()), b.alloc);
-        } catch (RpcException& e) {
-            part = Copy(fmt.MakeError(id, e), b.alloc);
-        } catch (std::exception& e) {
-            RpcException wrap(e.what(), ErrorCode::internal);
-            part = Copy(fmt.MakeError(id, wrap), b.alloc);
-        }
-        try {
-            b.parts.push_back(part);
-        } catch (std::exception& e) {
-            error("push into batch", e);
-        }
-        if (!--b.left) {
+    // Decrement the pending-parts counter; send the assembled batch response
+    // once the last part completes. Parts complete on arbitrary threads
+    // (continuations run inline), so left/parts are guarded by b.mut.
+    static void finishBatchPart(Batch& b) noexcept {
+        std::lock_guard lk(b.mut);
+        if (!--b.left && !b.parts.empty()) {
             try {
                 b.self->Send(b.Result());
             } catch (std::exception& e) {
                 error("send batch responce", e);
             }
         }
+    }
+
+    template<Protocol proto>
+    static void addBatchResp(JsonView id, Batch& b, Result<JsonView> res) noexcept try {
+        Formatter<proto> fmt;
+        JsonView part;
+        {
+            // The arena and parts are shared with the other parts of this
+            // batch completing concurrently: hold the lock while copying.
+            std::lock_guard lk(b.mut);
+            try {
+                part = Copy(fmt.MakeResponce(id, res.get()), b.alloc);
+            } catch (RpcException& e) {
+                part = Copy(fmt.MakeError(id, e), b.alloc);
+            } catch (std::exception& e) {
+                RpcException wrap(e.what(), ErrorCode::internal);
+                part = Copy(fmt.MakeError(id, wrap), b.alloc);
+            }
+            try {
+                b.parts.push_back(part);
+            } catch (std::exception& e) {
+                error("push into batch", e);
+            }
+        }
+        finishBatchPart(b);
     } catch (std::exception& e) {
         error("addBatchResponce()", e);
     }
@@ -174,12 +202,11 @@ struct IAsyncTransport::Impl {
         TraceFrame root;
         TraceFrame batchFrame("<batch>", root);
         rc::Strong<Batch> batch = new Batch;
-        batch->left = req.Array(false).size();
+        batch->left = 1; // one reference held by this dispatch loop itself
         batch->self = self;
         auto h = getHandler(self);
         if (!h) return;
         for (auto part: req.Array(false)) {
-            batch->left--;
             try {
                 TraceFrame frame(idx++, batchFrame);
                 auto id = part.Value(F::Id, JsonView{}, frame);
@@ -197,18 +224,30 @@ struct IAsyncTransport::Impl {
                         .AtLast(exec, [batch, id = Json(id)](auto result) mutable noexcept {
                             addBatchResp<proto>(id.View(), *batch, result);
                         });
-                    batch->left++;
+                    {
+                        // Mark the part as pending BEFORE dispatching: the
+                        // handler may complete it inline (or on another
+                        // thread) from inside Handle().
+                        std::lock_guard lk(batch->mut);
+                        batch->left++;
+                    }
                     h->Handle(req, std::move(cb));
                 }
             } catch (RpcException& e) {
                 Formatter<proto> fmt;
+                std::lock_guard lk(batch->mut);
                 batch->parts.push_back(Copy(fmt.MakeError(nullptr, e), batch->alloc));
             } catch (std::exception& e) {
                 Formatter<proto> fmt;
                 RpcException wrap(e.what(), ErrorCode::internal);
+                std::lock_guard lk(batch->mut);
                 batch->parts.push_back(Copy(fmt.MakeError(nullptr, wrap), batch->alloc));
             }
         }
+        // Release the dispatch loop's own reference. If every part already
+        // completed (inline), this sends the batch response. An all-notify
+        // batch has no parts and gets no response, per JSON-RPC 2.0.
+        finishBatchPart(*batch);
     }
     template<Protocol proto>
     void handleRespToClient(JsonView resp) {
@@ -219,21 +258,28 @@ struct IAsyncTransport::Impl {
         }
         TraceFrame root;
         auto num = id->Get<size_t>(TraceFrame{F::Id, root});
-        auto p = pending.find(num);
-        if (meta_Unlikely(p == pending.end())) {
-            JsonPair data[] = {{"was_id", num}};
-            throw RpcException("Could not find match id with any pending request => " + resp.Dump(),
-                               ErrorCode::invalid_request,
-                               jv::Json(data));
+        Promise<JsonView> prom;
+        {
+            std::lock_guard lk(mut);
+            auto p = pending.find(num);
+            if (meta_Unlikely(p == pending.end())) {
+                JsonPair data[] = {{"was_id", num}};
+                throw RpcException("Could not find match id with any pending request => " + resp.Dump(),
+                                   ErrorCode::invalid_request,
+                                   jv::Json(data));
+            }
+            prom = std::move(p->second.prom);
+            // Erase BEFORE fulfilling: the promise's continuations run inline
+            // and may re-enter addPending(), invalidating the iterator.
+            pending.erase(p);
         }
         if (const JsonView* r = resp.FindVal(F::Result); meta_Likely(r)) {
-            p->second.prom(*r);
+            prom(*r);
         } else if (const JsonView* e = resp.FindVal(F::Error)) {
-            p->second.prom(e->Get<RpcException>(TraceFrame{F::Error, TraceFrame{}}));
+            prom(e->Get<RpcException>(TraceFrame{F::Error, TraceFrame{}}));
         } else {
             throw RpcException("missing 'error' or 'result' fields", ErrorCode::invalid_request);
         }
-        pending.erase(p);
     }
     template<Protocol proto>
     void handle(IAsyncTransport* self, JsonView msg, ContextPtr ctx, Arena& alloc) {
@@ -264,10 +310,21 @@ struct IAsyncTransport::Impl {
     }
     void addPending(string method, size_t id, Promise<JsonView> cb, millis timeout) {
         Transact tr{std::move(method), std::move(cb), timeout};
-        auto [iter, ok] = pending.try_emplace(id, std::move(tr));
-        if (meta_Unlikely(!ok)) {
-            iter->second.prom(FutureError(iter->second.method + ": Timeout Error"));
-            iter->second = std::move(tr);
+        std::optional<Promise<JsonView>> displaced;
+        string displacedMethod;
+        {
+            std::lock_guard lk(mut);
+            auto [iter, ok] = pending.try_emplace(id, std::move(tr));
+            if (meta_Unlikely(!ok)) {
+                displaced.emplace(std::move(iter->second.prom));
+                displacedMethod = std::move(iter->second.method);
+                iter->second = std::move(tr);
+            }
+        }
+        // Reject the displaced request outside the lock (continuations run
+        // inline and may re-enter the transport).
+        if (displaced) {
+            (*displaced)(FutureError(displacedMethod + ": Timeout Error"));
         }
     }
 };
@@ -280,12 +337,19 @@ IAsyncTransport::IAsyncTransport(Protocol proto, rc::Weak<IHandler> h)
 
 rc::Weak<IHandler> IAsyncTransport::SetHandler(rc::Weak<IHandler> handler)
 {
+    std::lock_guard lk(d->mut);
     return std::exchange(d->handler, handler);
 }
 
 void IAsyncTransport::ClearAllPending()
 {
-    for (auto& [_, t]: d->pending) {
+    std::unordered_map<size_t, Transact> all;
+    {
+        std::lock_guard lk(d->mut);
+        all.swap(d->pending);
+    }
+    // Reject outside the lock: continuations run inline and may re-enter.
+    for (auto& [_, t]: all) {
         t.prom(FutureError("Manual Cancel"));
     }
 }
@@ -357,19 +421,28 @@ IAsyncTransport::~IAsyncTransport()
 void IAsyncTransport::CheckTimeouts()
 {
     auto now = steady_clock::now();
-    auto diff = duration_cast<milliseconds>(now - d->last).count();
-    d->last = now;
-    auto it = d->pending.begin();
-    while (it != d->pending.end()) {
-        if (it->second.timeout == NoTimeout) {
-            ++it;
-        } else if (it->second.timeout > diff) {
-            it->second.timeout -= diff;
-            ++it;
-        } else {
-            TimeoutHappened(it->second.method, it->second.prom);
-            it = d->pending.erase(it);
+    std::vector<std::pair<string, Promise<JsonView>>> expired;
+    {
+        std::lock_guard lk(d->mut);
+        auto diff = duration_cast<milliseconds>(now - d->last).count();
+        d->last = now;
+        auto it = d->pending.begin();
+        while (it != d->pending.end()) {
+            if (it->second.timeout == NoTimeout) {
+                ++it;
+            } else if (it->second.timeout > diff) {
+                it->second.timeout -= diff;
+                ++it;
+            } else {
+                // Take the entry out before fulfilling: continuations run
+                // inline from TimeoutHappened() and may re-enter the map.
+                expired.emplace_back(std::move(it->second.method), std::move(it->second.prom));
+                it = d->pending.erase(it);
+            }
         }
+    }
+    for (auto& [method, prom]: expired) {
+        TimeoutHappened(method, prom);
     }
 }
 

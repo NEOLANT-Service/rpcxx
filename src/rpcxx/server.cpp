@@ -32,7 +32,6 @@ struct rpcxx::Server::Impl {
     Impl() {
         exec = new StoppableExecutor();
         fallbackCtx = new Context;
-        current = fallbackCtx;
     }
     ~Impl() {
         exec->Stop();
@@ -45,8 +44,15 @@ struct rpcxx::Server::Impl {
     std::vector<RouteExceptionHandler> routeEHandlers;
     std::unique_ptr<Fallback> fallback;
     ContextPtr fallbackCtx;
-    ContextPtr current;
 };
+
+namespace {
+// The "current" per-call context is tracked per thread: a Server may dispatch
+// requests concurrently from multiple threads, so a shared member would race
+// (and would be meaningless anyway). Nested/routed dispatch on one thread is
+// handled by save/restore in DoHandle/DoHandleNotify.
+thread_local ContextPtr t_currentCtx = nullptr;
+}
 
 void Server::runMiddlewares(Request& req)
 {
@@ -104,7 +110,7 @@ void Server::AddRouteMiddleware(RouteMiddleware mw)
 
 ContextPtr Server::CurrentContext()
 {
-    return d->current;
+    return t_currentCtx ? t_currentCtx : d->fallbackCtx;
 }
 
 void Server::doAddExceptionHandler(ExceptionHandler h)
@@ -194,9 +200,10 @@ void Server::DoHandleNotify(Request& req) try
     auto& alloc = req.alloc;
     Promise<JsonView> cb{nullptr};
     CallCtx ctx{req, alloc, cb};
-    d->current = req.context;
-    defer revert([&]{
-        d->current = d->fallbackCtx;
+    auto prevCtx = t_currentCtx;
+    t_currentCtx = req.context;
+    defer revert([&, prevCtx]{
+        t_currentCtx = prevCtx;
     });
     runMiddlewares(req);
     auto found = d->calls.find(req.method.name);
@@ -212,9 +219,10 @@ void Server::DoHandle(Request& req, Promise<JsonView> cb) noexcept try
 {
     auto& alloc = req.alloc;
     CallCtx ctx{req, alloc, cb};
-    d->current = req.context;
-    defer revert([&]{
-        d->current = d->fallbackCtx;
+    auto prevCtx = t_currentCtx;
+    t_currentCtx = req.context;
+    defer revert([&, prevCtx]{
+        t_currentCtx = prevCtx;
     });
     runMiddlewares(req);
     if (req.method.name.substr(0, 4) == "rpc.") {

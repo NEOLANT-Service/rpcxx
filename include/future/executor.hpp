@@ -25,6 +25,8 @@ SOFTWARE.
 #ifndef FUT_EXECUTOR_HPP
 #define FUT_EXECUTOR_HPP
 
+#include <condition_variable>
+#include <mutex>
 #include "move_func.hpp"
 #include "rc/rc.hpp"
 
@@ -43,18 +45,35 @@ struct Executor : rc::SingleVirtualBase {
 
 struct StoppableExecutor final : fut::Executor {
     StoppableExecutor() noexcept = default;
+    // Stop accepting new jobs and wait until jobs already running (on any
+    // thread) finish. Must NOT be called from a thread that is itself
+    // executing a job on this executor (that would deadlock).
     void Stop() noexcept {
+        std::unique_lock lk(mut);
         dead = true;
+        cv.wait(lk, [&]{ return inFlight == 0; });
     }
     Status Execute(Job job) noexcept override {
-        if (dead.load(std::memory_order_acquire)) {
-            return Cancel;
+        {
+            std::lock_guard lk(mut);
+            if (dead) {
+                return Cancel;
+            }
+            ++inFlight;
         }
         job();
+        {
+            std::lock_guard lk(mut);
+            --inFlight;
+        }
+        cv.notify_one();
         return Done;
     }
 protected:
-    std::atomic_bool dead = false;
+    std::mutex mut;
+    std::condition_variable cv;
+    int inFlight = 0;
+    bool dead = false;
 };
 
 
