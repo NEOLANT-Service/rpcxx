@@ -59,7 +59,16 @@ struct NotifyCtx {
     {}
 
     ~NotifyCtx() {
-        if (notif) notif(data.get(), false);
+        if (!notif) return;
+        // The job never ran (executor returned Cancel). Clean up the
+        // type-erased functor and reject the chain, otherwise futures
+        // downstream of the cancelled continuation hang forever.
+        notif(data.get(), false);
+        if (chain) {
+            fut::d::fulfilExc(chain.get(), std::make_exception_ptr(
+                fut::FutureError("continuation cancelled by executor")));
+            fut::d::continueChain(std::move(chain));
+        }
     }
 };
 }

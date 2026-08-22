@@ -454,3 +454,33 @@ TEST_CASE("future")
     }
 }
 
+struct CancelExec : Executor {
+    Status Execute(Job) noexcept override { return Cancel; }
+};
+
+TEST_CASE("future: continuation returning invalid future rejects chain") {
+    Promise<int> prom;
+    bool hit = false;
+    prom.GetFuture()
+        .ThenSync([](int) -> Future<int> { return {}; }) // default-constructed, no state
+        .AtLastSync([&](Result<int> res) {
+            hit = true;
+            CHECK_THROWS_AS(res.get(), fut::FutureError);
+        });
+    prom(1);
+    CHECK(hit); // must not crash nor hang
+}
+
+TEST_CASE("future: continuation cancelled by executor rejects chain") {
+    Promise<int> prom;
+    bool hit = false;
+    prom.GetFuture()
+        .Then(new CancelExec, [](int) { return 42; })
+        .AtLastSync([&](Result<int> res) {
+            hit = true;
+            CHECK_THROWS_AS(res.get(), fut::FutureError);
+        });
+    prom(1);
+    CHECK(hit); // must not hang
+}
+

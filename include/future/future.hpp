@@ -488,10 +488,25 @@ void setResult(rc::Strong<Base>& chain, Fn& fn, Result<T> res) noexcept try {
             fut = fn(std::move(res));
         }
         Data<strip>* parent = fut.PeekState();
+        if (meta_Unlikely(!parent)) {
+            fulfilExc(chain.get(), std::make_exception_ptr(
+                FutureError("Continuation returned an invalid Future")));
+            return;
+        }
+        bool taken = false;
         {
             std::lock_guard<std::mutex> lk(parent->mtx);
-            parent->chain = chain;
-            parent->notify = notifyForward<strip>;
+            if (meta_Unlikely(parent->notify)) {
+                taken = true; // already has a continuation: must not overwrite
+            } else {
+                parent->chain = chain;
+                parent->notify = notifyForward<strip>;
+            }
+        }
+        if (meta_Unlikely(taken)) {
+            fulfilExc(chain.get(), std::make_exception_ptr(
+                FutureError("Continuation returned a Future that is already chained")));
+            return;
         }
         continueChain(parent);
     } else if constexpr (!std::is_void_v<type>) {
