@@ -498,12 +498,14 @@ transports and shared state.
 
 Ownership rule: any object that takes part in a `rc::Weak` reference (servers,
 handlers, transports, executors) must be heap-allocated and owned by an
-`rc::Strong` from the moment it is shared — create them with
-`rc::MakeStrong<T>(...)`. `rc::Weak::lock()` is the only way to dereference a
-weak reference; it returns a `Strong` that keeps the object alive during use
-and returns `nullptr` for objects that are not `rc::Strong`-owned (just like
-for expired ones), which turns stack-allocated handlers/transports into
-visible failures instead of memory corruption.
+`rc::Strong` from the moment it is shared. This is enforced at compile time:
+`rc::WeakableVirtual` is constructible only with a passkey
+(`rc::WeakableKey`) that just `rc::MakeStrong<T>(...)` can create, so
+user-defined subclasses take the key as their first constructor parameter and
+forward it to the base — stack allocation or raw `new` simply does not
+compile. `rc::Weak::lock()` is the only way to dereference a weak reference;
+it returns a `Strong` that keeps the object alive during use and `nullptr`
+for expired ones.
 
 ### Buffers (`include/membuff`)
 

@@ -34,25 +34,48 @@ rc::Strong<IClientTransport> link = rc::MakeStrong<ForwardToHandler>(server);
 
 Enforcement:
 
+- **Passkey construction (compile-time, airtight):** `rc::WeakableVirtual`
+  has a single constructor taking `rc::WeakableVirtual::Key` (aliased as
+  `rc::WeakableKey`), a passkey type whose constructor is private and
+  befriended only to `rc::MakeStrong`. Every subclass must therefore accept
+  the key as its first constructor parameter and pass it down the chain, and
+  the only way to obtain one is `rc::MakeStrong<T>(args...)` — which
+  heap-allocates `T` and immediately wraps it in `rc::Strong`. Stack/static
+  allocation, raw `new`, and placement into foreign containers are compile
+  errors for every weakable type, including user-defined subclasses.
 - `rc::Weak::lock()` refuses an object whose refcount is zero, i.e. one that
-  no `rc::Strong` owns (stack/static allocation, or a raw pointer published
-  before ownership was taken): it simply returns `nullptr`, exactly as for an
-  expired object. Locking such an object previously worked by luck with
-  `peek()` and would have deleted stack memory with `lock()`.
+  no `rc::Strong` owns: it simply returns `nullptr`, exactly as for an
+  expired object. This remains as the runtime backstop.
 - The destructors of `IHandler`, `IClientTransport`, `IAsyncTransport` and
-  `Server` are now **protected**; the destructors of the final classes
-  `Transport` and `ForwardToHandler` are **private**. Direct stack allocation
-  of these types is a compile error. Derived classes can still declare a
-  public destructor (C++ cannot forbid that), so the runtime check in
-  `lock()` remains the backstop — keep derived destructors protected and
-  create instances via `rc::MakeStrong<Derived>()` anyway.
+  `Server` are **protected**; the destructors of the final classes
+  `Transport` and `ForwardToHandler` are **private**. Keep derived
+  destructors non-public too: a public one invites a raw `delete` that
+  bypasses the refcount.
 - Destruction happens exclusively through `rc::Strong`. Do not `delete` these
   objects by hand and do not hand them to foreign ownership schemes (e.g. Qt
   parent/child) without releasing the `rc` ownership first
   (`Strong::Release()`), see `test/rps` for an example.
 
-A new factory `rc::MakeStrong<T>(args...)` (in `include/rc/rc.hpp`) is the
-idiomatic way to create such objects.
+Migration for your own handlers/transports/servers:
+
+```cpp
+// before
+struct MyServer : rpcxx::Server {
+    MyServer(int port) : port(port) {}
+};
+
+// after — take rc::WeakableKey first and forward it to the base
+struct MyServer : rpcxx::Server {
+    MyServer(rc::WeakableKey key, int port) : Server(key), port(port) {}
+};
+
+auto server = rc::MakeStrong<MyServer>(8080);   // unchanged call site
+```
+
+`using Base::Base;` constructor inheritance keeps working unchanged. The
+code generator emits key-accepting constructors, so regenerated stubs follow
+the new rule automatically (existing hand-written subclasses of generated
+servers need the extra parameter).
 
 ## 3. Futures: invalid continuations now reject instead of crashing/hanging
 

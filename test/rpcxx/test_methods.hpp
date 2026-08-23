@@ -75,7 +75,7 @@ DESCRIBE("RpcBig", RpcBig) {
 }
 
 struct TestServer : rpcxx::Server {
-    TestServer() {
+    TestServer(rc::WeakableKey key) : Server(key) {
         Notify("notification2", &TestServer::notification2);
         Notify("notification3", [](int, int, std::string){
 

@@ -40,7 +40,8 @@ public:
     ~TestServer() override {
         conns--;
     }
-    TestServer(QWebSocket* sock_) :
+    TestServer(rc::WeakableKey key, QWebSocket* sock_) :
+        rpcxx::Server(key),
         sock(sock_)
     {
         conns++;

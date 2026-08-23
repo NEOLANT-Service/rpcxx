@@ -40,7 +40,9 @@ struct Request {
 
 // Route is a json pointer
 struct IHandler : rc::WeakableVirtual {
-    IHandler();
+    // The passkey is constructible only by rc::MakeStrong, which is therefore
+    // the only way to create an IHandler (heap-allocated, Strong-owned).
+    IHandler(rc::WeakableKey);
     template<typename T>
     void SetTransport(T* tr) {tr->SetHandler(this);}
     rc::Weak<IHandler> GetRoute(string_view route);

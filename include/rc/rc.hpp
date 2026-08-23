@@ -36,6 +36,12 @@ namespace rc
 struct WeakableVirtual;
 
 template<typename T>
+struct Strong;
+
+template<typename T, typename... Args>
+Strong<T> MakeStrong(Args&&... args);
+
+template<typename T>
 struct Strong {
     template<typename U>
     using if_compatible = std::enable_if_t<std::is_convertible_v<U*, T*>, int>;
@@ -131,6 +137,18 @@ inline static void _unlock(std::atomic_bool& lock) {
 }
 
 struct WeakableVirtual : VirtualBase {
+    // Passkey enforcing heap allocation: only rc::MakeStrong can create a
+    // Key, and WeakableVirtual has no other constructor — so every subclass
+    // must take a Key and can only be constructed by rc::MakeStrong, which
+    // heap-allocates it and immediately hands ownership to rc::Strong.
+    // Stack/static allocation or a raw `new` of a weakable object is a
+    // compile error; rc::Weak can therefore rely on its lock() contract.
+    class Key {
+        Key() = default;
+        template<typename T, typename... Args>
+        friend Strong<T> MakeStrong(Args&&...);
+    };
+    explicit WeakableVirtual(Key) noexcept {}
     friend void Unref(WeakableVirtual* d) noexcept {
         // _sync serializes against GetWeak()/_make() (which lazily creates
         // _block); block->_sync serializes the refcount-to-zero decision
@@ -230,12 +248,19 @@ private:
     Strong<WeakBlock> block;
 };
 
-//! Create a heap object immediately owned by rc::Strong — the required way
-//! to allocate objects that take part in rc::Weak references (IHandler,
-//! IClientTransport, Server, transports, executors, ...).
+using WeakableKey = WeakableVirtual::Key;
+
+//! Create a heap object immediately owned by rc::Strong — the ONLY way to
+//! construct objects derived from rc::WeakableVirtual (IHandler,
+//! IClientTransport, Server, transports, ...): their constructors require a
+//! rc::WeakableKey that only this factory can create.
 template<typename T, typename... Args>
 Strong<T> MakeStrong(Args&&... args) {
-    return Strong<T>(new T(std::forward<Args>(args)...));
+    if constexpr (std::is_base_of_v<WeakableVirtual, T>) {
+        return Strong<T>(new T(WeakableVirtual::Key{}, std::forward<Args>(args)...));
+    } else {
+        return Strong<T>(new T(std::forward<Args>(args)...));
+    }
 }
 
 }

@@ -85,7 +85,7 @@ struct Server : IHandler
     using Fallback = MoveFunc<JsonView(Request& req, Arena& alloc)>;
     using NoNames = const int*;
 
-    Server();
+    Server(rc::WeakableKey key);
     Server(const Server&) = delete;
     Server(Server&&) = delete;
 
@@ -134,9 +134,11 @@ struct Server : IHandler
 protected:
     // Protected: a Server must live on the heap, owned by rc::Strong, so that
     // rc::Weak references to it (routes, transports) can be locked safely.
-    // Create with rc::MakeStrong<Server>() (or a derived class); deletion
-    // goes through rc::Strong. Derived classes should keep their destructor
-    // protected as well — a public one re-allows (unsafe) stack allocation.
+    // Construction is possible only via rc::MakeStrong<Server>() (the
+    // rc::WeakableKey passkey forbids stack allocation and raw `new`);
+    // deletion goes through rc::Strong. Derived classes should keep their
+    // destructor protected as well — a public one invites a raw `delete`
+    // that bypasses the refcount.
     virtual ~Server();
     struct CallCtx {
         Request& req;

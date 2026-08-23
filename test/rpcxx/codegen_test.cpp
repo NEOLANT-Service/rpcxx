@@ -33,7 +33,7 @@ struct validated{};
 
 struct Consumer : test::RPC_Server
 {
-    Consumer() {}
+    Consumer(rc::WeakableKey key) : RPC_Server(key) {}
 };
 
 int main(int argc, char *argv[])

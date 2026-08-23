@@ -27,10 +27,10 @@ SOFTWARE.
 #include <rpcxx/rpcxx.hpp>
 
 struct WsTransport final : public QObject, rpcxx::IAsyncTransport {
-    WsTransport(QWebSocket* ws) :
+    WsTransport(rc::WeakableKey key, QWebSocket* ws) :
         // No Qt parent: the transport is owned exclusively by rc::Strong.
         QObject(nullptr),
-        IAsyncTransport(rpcxx::Protocol::json_v2_minified),
+        IAsyncTransport(key, rpcxx::Protocol::json_v2_minified),
         sock(ws)
     {
         connect(ws, &QWebSocket::binaryMessageReceived, this, [this](QByteArray msg){

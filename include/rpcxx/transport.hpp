@@ -48,6 +48,7 @@ struct Batch {
 };
 
 struct IClientTransport : IHandler {
+    IClientTransport(rc::WeakableKey key) : IHandler(key) {}
     virtual void SendBatch(Batch batch) = 0;
     virtual void SendNotify(string_view method, JsonView params) = 0;
     virtual void SendMethod(Method method, JsonView params, Promise<JsonView> cb) = 0;
@@ -58,7 +59,8 @@ protected:
 };
 
 struct ForwardToHandler final : IClientTransport {
-    ForwardToHandler(rc::Weak<IHandler> h = nullptr) noexcept : h(h) {}
+    ForwardToHandler(rc::WeakableKey key, rc::Weak<IHandler> h = nullptr) noexcept
+        : IClientTransport(key), h(h) {}
     rc::Weak<IHandler> SetHandler(rc::Weak<IHandler> handler);
 protected:
     rc::Weak<IHandler> h;
@@ -66,14 +68,15 @@ protected:
     void SendNotify(string_view method, JsonView params) override;
     void SendMethod(Method method, JsonView params, Promise<JsonView> cb) override;
 private:
-    // Final class: private dtor forbids stack allocation outright. Create via
-    // rc::MakeStrong<ForwardToHandler>(...); destroyed only by rc::Strong.
+    // Final class: private dtor so destruction happens only via rc::Strong.
+    // Construction is exclusively through rc::MakeStrong<ForwardToHandler>
+    // (enforced by the base-class passkey).
     ~ForwardToHandler() override = default;
 };
 
 //! Bidirectional transport for both server (any IHandler) and Client
 struct IAsyncTransport : IClientTransport {
-    IAsyncTransport(Protocol proto, rc::Weak<IHandler> h = nullptr);
+    IAsyncTransport(rc::WeakableKey key, Protocol proto, rc::Weak<IHandler> h = nullptr);
 
     rc::Weak<IHandler> SetHandler(rc::Weak<IHandler> handler);
     void ClearAllPending();
@@ -103,7 +106,7 @@ private:
 struct Transport final : IAsyncTransport {
     using Sender = MoveFunc<void(JsonView)>;
 
-    Transport(Protocol proto = Protocol::json_v2_compliant);
+    Transport(rc::WeakableKey key, Protocol proto = Protocol::json_v2_compliant);
 
     void OnReply(Sender callback);
 protected:
@@ -112,8 +115,9 @@ protected:
 
     Sender sender;
 private:
-    // Final class: private dtor forbids stack allocation outright. Create via
-    // rc::MakeStrong<Transport>(...); destroyed only by rc::Strong.
+    // Final class: private dtor so destruction happens only via rc::Strong.
+    // Construction is exclusively through rc::MakeStrong<Transport>
+    // (enforced by the base-class passkey).
     ~Transport() override = default;
 };
 
