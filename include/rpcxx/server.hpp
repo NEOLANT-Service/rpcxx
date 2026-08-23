@@ -200,7 +200,7 @@ private:
     template<typename T>
     struct Wrap {
         string method;
-        Server* self;
+        rc::Weak<Server> self;
         Promise<JsonView> cb;
         ContextPtr ctx;
         void operator()(Result<T> result) noexcept try {
@@ -212,8 +212,15 @@ private:
                 cb(JsonView::From(result.get(), alloc));
             }
         } catch (std::exception& e) {
-            auto over = self->excHandlers("", method, std::move(ctx), e);
-            cb(over ? std::move(over) : std::current_exception());
+            // An async method may resolve after the Server was destroyed:
+            // use its exception handlers only while it is still alive,
+            // otherwise forward the exception unmodified.
+            if (rc::Strong<Server> s = self.lock()) {
+                auto over = s->excHandlers("", method, std::move(ctx), e);
+                cb(over ? std::move(over) : std::current_exception());
+            } else {
+                cb(std::current_exception());
+            }
         }
     };
 

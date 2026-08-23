@@ -332,3 +332,30 @@ TEST_CASE("rpc: SetRoute rejects route cycles") {
     // Non-cyclic chaining is fine.
     CHECK_NOTHROW(b->SetRoute("a", a));       // a no longer routes to b
 }
+
+// Async completions used to capture the Server by raw pointer: rejecting an
+// async method after the server was destroyed was a use-after-free in the
+// exception-handler path (Server::Wrap and Server::OnForward).
+TEST_CASE("rpc: async completion after server destruction") {
+    fut::SharedPromise<std::string> pending;
+    rc::Strong<MockTransport> tr;
+    rc::Strong<Server> router;
+    {
+        rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+        std::reference_wrapper<fut::SharedPromise<std::string>> ref(pending);
+        server->Method("deferred", [ref]() -> Future<std::string> {
+            return ref.get().GetFuture();
+        });
+        router = rc::MakeStrong<Server>();
+        router->SetRoute("r", server);
+        tr = rc::MakeStrong<MockTransport>(Protocol::json_v2_compliant, router);
+        tr->fmt = json;
+    } // the method server is gone; only weak references remain
+
+    Client cli;
+    cli.SetTransport(tr);
+    auto f = cli.Request<std::string>(Method{"r/deferred", NoTimeout});
+    (void)std::exchange(router, nullptr); // the router is gone too
+    pending(std::runtime_error("late failure")); // must not touch dead servers
+    CHECK_THROWS(ToStdFuture(std::move(f)).get());
+}

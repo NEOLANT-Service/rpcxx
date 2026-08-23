@@ -128,18 +128,26 @@ void Server::OnForward(string_view route, Request &req, Promise<JsonView> &cb) n
     auto orig = std::move(cb);
     cb = Promise<JsonView>{};
     // todo: use timeout somehow
-    cb.GetFuture().AtLast(
-        GetExecutor(),
-        [this, MV(orig), r = string{route}, ctx = req.context, m = string{req.method.name}]
-        (Result<JsonView> res) mutable {
-            try {
-                orig(res.get());
-            } catch (std::exception& e) {
-                auto over = excHandlers(r, m, ctx, e);
-                orig(over ? over : std::current_exception());
-            }
-        });
     try {
+        // The forwarded call may complete after this Server was destroyed:
+        // capture a weak self and only run the exception handlers while the
+        // server is still alive.
+        rc::Weak<Server> self = this;
+        cb.GetFuture().AtLast(
+            GetExecutor(),
+            [self, MV(orig), r = string{route}, ctx = req.context, m = string{req.method.name}]
+            (Result<JsonView> res) mutable {
+                try {
+                    orig(res.get());
+                } catch (std::exception& e) {
+                    if (rc::Strong<Server> s = self.lock()) {
+                        auto over = s->excHandlers(r, m, ctx, e);
+                        orig(over ? over : std::current_exception());
+                    } else {
+                        orig(std::current_exception());
+                    }
+                }
+            });
         runRouteMiddlewares(route, req);
     } catch (std::exception& e) {
         auto over = excHandlers(route, req.method.name, std::move(req.context), e);
