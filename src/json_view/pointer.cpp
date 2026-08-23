@@ -48,15 +48,20 @@ static JsonKey parseOne(string_view raw, bool onlyNumbers) {
     }
 }
 
+// RFC 3986 fragment = *( pchar / "/" / "?" ), where
+// pchar = unreserved / pct-encoded / sub-delims / ":" / "@". Everything in
+// the fragment charset may appear unencoded in a URI-form Json Pointer.
 static constexpr bool needPercentEncode(char c) {
     return !(
         (c >= '0' && c <= '9')
         || (c >= 'A' && c <='Z')
         || (c >= 'a' && c <= 'z')
-        || c == '-'
-        || c == '.'
-        || c == '_'
-        || c == '~');
+        || c == '-' || c == '.' || c == '_' || c == '~'   // unreserved
+        || c == '!' || c == '$' || c == '&' || c == '\''  // sub-delims
+        || c == '(' || c == ')' || c == '*' || c == '+'
+        || c == ',' || c == ';' || c == '='
+        || c == ':' || c == '@'                           // pchar extras
+        || c == '/' || c == '?');                         // fragment extras
 }
 
 static char percentDecode(size_t& idx, string_view src) {

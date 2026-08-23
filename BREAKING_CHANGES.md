@@ -127,7 +127,9 @@ These changed no API and no valid observable behavior — they only remove UB:
 - `JsonPointer::FromString`: "/" and "#/" now produce the single empty-string
   token per RFC 6901 (previously an uninitialized token), "#" is the root
   pointer, the URI-form leading '/' is skipped, and '~' escapes no longer
-  stick for the rest of the token.
+  stick for the rest of the token. URI-form Json Pointers now accept the
+  full RFC 3986 fragment charset unencoded (`/`, `?`, `:`, `@`, sub-delims),
+  so e.g. "#/a/b" no longer throws.
 - `Server` async completions (`Wrap`, `OnForward`) capture the server
   weakly: rejecting an async method after the server was destroyed is no
   longer a use-after-free.

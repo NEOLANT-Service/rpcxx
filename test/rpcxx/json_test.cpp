@@ -505,6 +505,13 @@ TEST_CASE("ub regressions")
         CHECK(JsonPointer::FromString("/a~0b~1c", alloc).Join() == "/a~0b~1c");
         // URI form: the leading '/' after '#' is skipped
         CHECK(JsonPointer::FromString("#/a", alloc).Join() == "/a");
+        // URI form accepts the full RFC 3986 fragment charset unencoded:
+        // '/' separates tokens, '?' ':' '@' and sub-delims are part of a token
+        CHECK(JsonPointer::FromString("#/a/b", alloc).Join() == "/a/b");
+        CHECK(JsonPointer::FromString("#/a?b:c@d", alloc).Join() == "/a?b:c@d");
+        CHECK(JsonPointer::FromString("#/a!$&'()*+,;=b", alloc).Join() == "/a!$&'()*+,;=b");
+        // percent-encoding still decodes
+        CHECK(JsonPointer::FromString("#/a%20b", alloc).Join() == "/a b");
         // ordinary round-trips
         CHECK(JsonPointer::FromString("/a/b", alloc).Join() == "/a/b");
         CHECK(JsonPointer::FromString("/0/1", alloc).Join() == "/0/1");
