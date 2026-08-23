@@ -387,6 +387,13 @@ IAsyncTransport::IAsyncTransport(rc::WeakableKey key, Protocol proto, rc::Weak<I
     d->proto = proto;
 }
 
+IAsyncTransport::IAsyncTransport(rc::foreign_owned_t foreign, Protocol proto, rc::Weak<IHandler> h)
+    : IClientTransport(foreign)
+{
+    d->handler = h;
+    d->proto = proto;
+}
+
 rc::Weak<IHandler> IAsyncTransport::SetHandler(rc::Weak<IHandler> handler)
 {
     std::lock_guard lk(d->mut);

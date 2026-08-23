@@ -134,6 +134,40 @@ thread itself nothing changes.
   flags. (doctest 2.4.12 fixes the floor upstream but changes
   expression-decomposition semantics that the existing tests rely on.)
 
+## 7. New opt-out: `rc::foreign_owned` for foreign-owned (Qt) objects
+
+Section 2's passkey makes `rc::MakeStrong` the only way to construct weakable
+objects. There is one deliberate, explicit escape hatch for objects owned by
+a foreign scheme such as Qt parent/child:
+
+```cpp
+struct QObjectServer : QObject, rpcxx::Server {
+    QObjectServer(QObject* parent)
+        : QObject(parent), Server(rc::foreign_owned) {}
+    ~QObjectServer() override = default; // public: the owner deletes
+};
+
+auto* server = new QObjectServer(parent); // no MakeStrong, no rc::Strong
+```
+
+- `rc` **never deletes** such an object (`Unref` only decrements); deletion
+  is the owner's job (parent teardown, `deleteLater()`, ...).
+- `rc::Weak` references keep working: expiry is signaled by the destructor
+  nulling the weak block, so `lock()` returns `nullptr` once the owner
+  deletes the object.
+- **Not thread-safe by design**: construction, destruction and every
+  `Weak::lock()` must happen on the same thread. Debug builds assert this
+  (thread affinity recorded at construction).
+- `rc::Strong` references to foreign-owned objects do not extend their
+  lifetime — use them only as short-lived `lock()` results on the owner
+  thread.
+
+`IHandler`, `IClientTransport`, `IAsyncTransport` and `Server` each gained a
+`rc::foreign_owned_t` constructor overload. `test/rps/rps_server.cpp` shows
+the idiom: the per-connection server is parented to its `QWebSocket` and
+dies with the connection, replacing the previous `Release()`/`deleteLater()`
+hand-off dance.
+
 ## Non-breaking fixes (for completeness)
 
 These changed no API and no valid observable behavior — they only remove UB:

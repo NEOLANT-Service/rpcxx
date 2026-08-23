@@ -178,6 +178,10 @@ rpcxx::Server::Server(rc::WeakableKey key) : IHandler(key), d() {
 
 }
 
+rpcxx::Server::Server(rc::foreign_owned_t foreign) : IHandler(foreign), d() {
+
+}
+
 rpcxx::Server::~Server()
 {}
 

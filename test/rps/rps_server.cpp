@@ -40,11 +40,18 @@ public:
     ~TestServer() override {
         conns--;
     }
-    TestServer(rc::WeakableKey key, QWebSocket* sock_) :
-        rpcxx::Server(key),
+    // Foreign-owned (rc::foreign_owned): parented to the socket, so Qt
+    // deletes us when the connection dies — no rc::Strong, no MakeStrong.
+    // Single-threaded (GUI thread) by contract; the transport's Weak<IHandler>
+    // to us expires via ~WeakableVirtual when we are destroyed.
+    TestServer(QWebSocket* sock_) :
+        QObject(sock_),
+        rpcxx::Server(rc::foreign_owned),
         sock(sock_)
     {
         conns++;
+        // Deleting the socket on disconnect deletes us (its child) too.
+        connect(sock_, &QWebSocket::disconnected, sock_, &QObject::deleteLater);
         transport = rc::MakeStrong<WsTransport>(sock);
         transport->SetHandler(this);
         Method("calc", [](int a, int b){
@@ -68,13 +75,9 @@ int main(int argc, char *argv[])
     QWebSocketServer server("test", QWebSocketServer::NonSecureMode);
     app.connect(&server, &QWebSocketServer::newConnection, [&]{
         while(server.hasPendingConnections()) {
-            rc::Strong<TestServer> srv = rc::MakeStrong<TestServer>(server.nextPendingConnection());
-            QObject::connect(srv->sock, &QWebSocket::disconnected, srv.get(), [srv = std::move(srv)]() mutable {
-                // Hand ownership over to Qt's deferred deletion: the rc
-                // ownership is released here and deleteLater() destroys the
-                // object (and with it the rc-owned transport) safely.
-                srv.Release()->deleteLater();
-            });
+            // Owned by the socket via Qt parent/child — dies with the
+            // connection (see TestServer's ctor), no rc ownership at all.
+            new TestServer(server.nextPendingConnection());
         }
     });
     if (!server.listen(QHostAddress("0.0.0.0"), 6000)) {

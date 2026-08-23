@@ -1,5 +1,6 @@
 build/
 build-tsan/
+build-rps/
 .vscode/
 .vs/
 gen/

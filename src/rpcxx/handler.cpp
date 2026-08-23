@@ -41,6 +41,11 @@ IHandler::IHandler(rc::WeakableKey key) : WeakableVirtual(key)
 
 }
 
+IHandler::IHandler(rc::foreign_owned_t foreign) : WeakableVirtual(foreign)
+{
+
+}
+
 void IHandler::OnForward(string_view, Request &, Promise<JsonView> &) noexcept
 {
 

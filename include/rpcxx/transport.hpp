@@ -49,6 +49,7 @@ struct Batch {
 
 struct IClientTransport : IHandler {
     IClientTransport(rc::WeakableKey key) : IHandler(key) {}
+    IClientTransport(rc::foreign_owned_t foreign) : IHandler(foreign) {}
     virtual void SendBatch(Batch batch) = 0;
     virtual void SendNotify(string_view method, JsonView params) = 0;
     virtual void SendMethod(Method method, JsonView params, Promise<JsonView> cb) = 0;
@@ -77,6 +78,8 @@ private:
 //! Bidirectional transport for both server (any IHandler) and Client
 struct IAsyncTransport : IClientTransport {
     IAsyncTransport(rc::WeakableKey key, Protocol proto, rc::Weak<IHandler> h = nullptr);
+    // Foreign-owned variant (e.g. QObject with a parent) — see IHandler.
+    IAsyncTransport(rc::foreign_owned_t foreign, Protocol proto, rc::Weak<IHandler> h = nullptr);
 
     rc::Weak<IHandler> SetHandler(rc::Weak<IHandler> handler);
     void ClearAllPending();

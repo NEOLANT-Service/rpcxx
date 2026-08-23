@@ -380,3 +380,23 @@ TEST_CASE("rpc: async completion after server destruction") {
         CHECK(e.code == ErrorCode::internal);
     }
 }
+
+// rc::foreign_owned opts a weakable object out of Strong ownership (Qt
+// parent/child style): created with plain `new`, deleted by its owner, and
+// rc::Weak expires it via the destructor. Single-threaded by contract.
+TEST_CASE("rc: foreign-owned object is weak-referenceable without Strong") {
+    struct ForeignServer : Server {
+        ForeignServer() : Server(rc::foreign_owned) {}
+        ~ForeignServer() override = default; // public: the foreign owner deletes
+    };
+    rc::Weak<IHandler> weak;
+    auto* server = new ForeignServer();
+    weak = server;
+    {
+        rc::Strong<IHandler> locked = weak.lock();
+        CHECK(locked.get() != nullptr); // locks although no Strong owns the object
+    } // Unref drops the refcount to zero — must NOT delete
+    CHECK(weak.lock().get() != nullptr); // still alive, still lockable
+    delete server; // the "Qt parent" deletes it
+    CHECK(weak.lock().get() == nullptr); // expired via the destructor
+}

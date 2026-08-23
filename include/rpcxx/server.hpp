@@ -86,6 +86,10 @@ struct Server : IHandler
     using NoNames = const int*;
 
     Server(rc::WeakableKey key);
+    // Foreign-owned variant (e.g. a QObject with a parent): plain `new`,
+    // deleted by the owner, referenced via rc::Weak only. Single-threaded —
+    // see rc::foreign_owned.
+    Server(rc::foreign_owned_t foreign);
     Server(const Server&) = delete;
     Server(Server&&) = delete;
 

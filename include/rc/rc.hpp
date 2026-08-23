@@ -26,7 +26,9 @@ SOFTWARE.
 #define RC_HPP
 
 #include <atomic>
+#include <cassert>
 #include <cstddef>
+#include <thread>
 #include <type_traits>
 #include <utility>
 
@@ -148,8 +150,30 @@ struct WeakableVirtual : VirtualBase {
         template<typename T, typename... Args>
         friend Strong<T> MakeStrong(Args&&...);
     };
+    // Explicit opt-out from Strong ownership for objects owned by a foreign
+    // scheme (e.g. Qt parent/child): `ForeignServer(QObject* parent)
+    //     : QObject(parent), Server(rc::foreign_owned) {}`
+    // and a plain `new ForeignServer(parent)` — no rc::MakeStrong. rc NEVER
+    // deletes such an object (Unref only decrements), and rc::Weak expires it
+    // when the destructor nulls the weak block. NOT THREAD-SAFE by design:
+    // creation, deletion and every Weak::lock() must happen on the same
+    // thread (enforced by an assert in debug builds). Do not keep rc::Strong
+    // references to foreign-owned objects — they do not extend the lifetime.
+    struct foreign_owned_t { explicit foreign_owned_t() = default; };
     explicit WeakableVirtual(Key) noexcept {}
+    explicit WeakableVirtual(foreign_owned_t) noexcept : _foreignOwned(true) {
+#ifndef NDEBUG
+        _ownerThread = std::this_thread::get_id();
+#endif
+    }
     friend void Unref(WeakableVirtual* d) noexcept {
+        if (d->_foreignOwned) {
+            // Foreign-owned: rc never deletes; the owner (e.g. Qt parent)
+            // does, and ~WeakableVirtual expires the weak block.
+            d->_assertOwnerThread();
+            d->_refs.fetch_sub(1, std::memory_order_acq_rel);
+            return;
+        }
         // _sync serializes against GetWeak()/_make() (which lazily creates
         // _block); block->_sync serializes the refcount-to-zero decision
         // against Weak::lock(), which holds block->_sync across its
@@ -185,6 +209,8 @@ struct WeakableVirtual : VirtualBase {
         }
     }
 protected:
+    // Weak::lock() inspects _foreignOwned / _assertOwnerThread().
+    template<typename> friend struct Weak;
     static void _make(Strong<WeakBlock>& block, std::atomic_bool &lock, char* d, int* offset) {
         _lock(lock);
         if (!block) {
@@ -201,7 +227,22 @@ protected:
         }
     }
     Strong<WeakBlock> _block;
+    bool _foreignOwned = false;
+#ifndef NDEBUG
+    std::thread::id _ownerThread;
+#endif
+    void _assertOwnerThread() const noexcept {
+#ifndef NDEBUG
+        assert((!_foreignOwned || _ownerThread == std::this_thread::get_id())
+               && "foreign-owned rc objects are confined to their creator thread");
+#endif
+    }
 };
+
+//! Opt-out tag for foreign-owned (e.g. Qt parented) weakable objects — see
+//! WeakableVirtual::foreign_owned_t for the contract.
+using foreign_owned_t = WeakableVirtual::foreign_owned_t;
+inline constexpr foreign_owned_t foreign_owned{};
 
 template<typename T>
 struct Weak {
@@ -222,7 +263,8 @@ struct Weak {
     //! pointer published before ownership was taken) — locking such an object
     //! would make the temporary Strong delete memory it does not own. Objects
     //! that take part in weak references must be heap-allocated and owned via
-    //! rc::Strong from the moment they are published — see rc::MakeStrong.
+    //! rc::Strong from the moment they are published — see rc::MakeStrong,
+    //! or be explicitly foreign-owned (see rc::foreign_owned).
     Strong<T> lock() const noexcept {
         if (!block) return nullptr;
         _lock(block->_sync);
@@ -231,12 +273,18 @@ struct Weak {
         // Unref nulls the block in the same critical section that drops the
         // refcount to zero, a non-null pointer here implies _refs >= 1 for
         // any properly rc-owned object; _refs == 0 therefore means the object
-        // is not owned by a Strong and must not be locked.
+        // is not owned by a Strong and must not be locked. Foreign-owned
+        // objects skip the refcount gate: no Strong ever owns them, expiry is
+        // signaled by the destructor nulling the block, and the whole scheme
+        // is confined to the creator thread.
         char* p = block->data.load(std::memory_order_acquire);
         Strong<T> r = nullptr;
         if (p) {
             T* obj = reinterpret_cast<T*>(p + offset);
-            if (obj->_refs.load(std::memory_order_relaxed) != 0) {
+            if (obj->_foreignOwned) {
+                obj->_assertOwnerThread();
+                r = obj;
+            } else if (obj->_refs.load(std::memory_order_relaxed) != 0) {
                 r = obj;
             }
         }

@@ -505,7 +505,10 @@ user-defined subclasses take the key as their first constructor parameter and
 forward it to the base — stack allocation or raw `new` simply does not
 compile. `rc::Weak::lock()` is the only way to dereference a weak reference;
 it returns a `Strong` that keeps the object alive during use and `nullptr`
-for expired ones.
+for expired ones. Objects owned by a foreign scheme (e.g. Qt parent/child)
+can opt out via the `rc::foreign_owned` constructor tag: `rc` never deletes
+them, `Weak` expiry is signaled by the destructor, and the object is
+confined to its creator thread (asserted in debug builds).
 
 ### Buffers (`include/membuff`)
 
