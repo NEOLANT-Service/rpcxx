@@ -42,7 +42,7 @@ struct Request {
 struct IHandler : rc::WeakableVirtual {
     // The passkey is constructible only by rc::MakeStrong, which is therefore
     // the only way to create an IHandler (heap-allocated, Strong-owned).
-    IHandler(rc::WeakableKey);
+    IHandler(rc::MakeStrongRef);
     // Opt-out for foreign ownership (e.g. Qt parent/child): the object is
     // created with plain `new` and deleted by its owner; rc only ever holds
     // Weak references to it. Single-threaded — see rc::foreign_owned.

@@ -32,7 +32,7 @@ constexpr auto format_inline = R"EOF(
 struct {server_name} : public rpcxx::Server
 {{
     template<int=0>
-    {server_name}(rc::WeakableKey);
+    {server_name}(rc::MakeStrongRef);
     {server_name}* as_{server_name}() noexcept {{return this;}}
 {methods}
 }};{describe}
@@ -40,7 +40,7 @@ struct {server_name} : public rpcxx::Server
 
 constexpr auto format_source = R"EOF(
 template<int>
-inline {server_name}::{server_name}(rc::WeakableKey key) : Server(key) {{{register_methods}
+inline {server_name}::{server_name}(rc::MakeStrongRef key) : Server(key) {{{register_methods}
 }}
 )EOF";
 

@@ -36,7 +36,7 @@ struct IHandler::Impl {
     AllRoutes routes;
 };
 
-IHandler::IHandler(rc::WeakableKey key) : WeakableVirtual(key)
+IHandler::IHandler(rc::MakeStrongRef key) : WeakableVirtual(key)
 {
 
 }

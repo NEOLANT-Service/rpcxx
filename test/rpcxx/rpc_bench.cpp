@@ -37,7 +37,7 @@ enum format {
 };
 
 struct MsgPackTr : IAsyncTransport {
-    MsgPackTr(rc::WeakableKey key, Protocol proto, rc::Weak<IHandler> h) : IAsyncTransport(key, proto, h) {}
+    MsgPackTr(rc::MakeStrongRef key, Protocol proto, rc::Weak<IHandler> h) : IAsyncTransport(key, proto, h) {}
     void Send(JsonView msg) override {
         membuff::StringOut out;
         DumpMsgPackInto(out, msg);
@@ -49,7 +49,7 @@ struct MsgPackTr : IAsyncTransport {
 };
 
 struct JsonTr : IAsyncTransport {
-    JsonTr(rc::WeakableKey key, Protocol proto, rc::Weak<IHandler> h) : IAsyncTransport(key, proto, h) {}
+    JsonTr(rc::MakeStrongRef key, Protocol proto, rc::Weak<IHandler> h) : IAsyncTransport(key, proto, h) {}
     void Send(JsonView msg) override {
         membuff::StringOut out;
         DumpJsonInto(out, msg);

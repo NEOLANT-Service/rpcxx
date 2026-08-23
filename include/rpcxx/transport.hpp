@@ -48,7 +48,7 @@ struct Batch {
 };
 
 struct IClientTransport : IHandler {
-    IClientTransport(rc::WeakableKey key) : IHandler(key) {}
+    IClientTransport(rc::MakeStrongRef key) : IHandler(key) {}
     IClientTransport(rc::foreign_owned_t foreign) : IHandler(foreign) {}
     virtual void SendBatch(Batch batch) = 0;
     virtual void SendNotify(string_view method, JsonView params) = 0;
@@ -60,7 +60,7 @@ protected:
 };
 
 struct ForwardToHandler final : IClientTransport {
-    ForwardToHandler(rc::WeakableKey key, rc::Weak<IHandler> h = nullptr) noexcept
+    ForwardToHandler(rc::MakeStrongRef key, rc::Weak<IHandler> h = nullptr) noexcept
         : IClientTransport(key), h(h) {}
     rc::Weak<IHandler> SetHandler(rc::Weak<IHandler> handler);
 protected:
@@ -77,7 +77,7 @@ private:
 
 //! Bidirectional transport for both server (any IHandler) and Client
 struct IAsyncTransport : IClientTransport {
-    IAsyncTransport(rc::WeakableKey key, Protocol proto, rc::Weak<IHandler> h = nullptr);
+    IAsyncTransport(rc::MakeStrongRef key, Protocol proto, rc::Weak<IHandler> h = nullptr);
     // Foreign-owned variant (e.g. QObject with a parent) — see IHandler.
     IAsyncTransport(rc::foreign_owned_t foreign, Protocol proto, rc::Weak<IHandler> h = nullptr);
 
@@ -109,7 +109,7 @@ private:
 struct Transport final : IAsyncTransport {
     using Sender = MoveFunc<void(JsonView)>;
 
-    Transport(rc::WeakableKey key, Protocol proto = Protocol::json_v2_compliant);
+    Transport(rc::MakeStrongRef key, Protocol proto = Protocol::json_v2_compliant);
 
     void OnReply(Sender callback);
 protected:

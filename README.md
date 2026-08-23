@@ -500,7 +500,7 @@ Ownership rule: any object that takes part in a `rc::Weak` reference (servers,
 handlers, transports, executors) must be heap-allocated and owned by an
 `rc::Strong` from the moment it is shared. This is enforced at compile time:
 `rc::WeakableVirtual` is constructible only with a passkey
-(`rc::WeakableKey`) that just `rc::MakeStrong<T>(...)` can create, so
+(`rc::MakeStrongRef`) that just `rc::MakeStrong<T>(...)` can create, so
 user-defined subclasses take the key as their first constructor parameter and
 forward it to the base — stack allocation or raw `new` simply does not
 compile. `rc::Weak::lock()` is the only way to dereference a weak reference;

@@ -27,7 +27,7 @@ SOFTWARE.
 #include <rpcxx/rpcxx.hpp>
 
 struct WsTransport final : public QObject, rpcxx::IAsyncTransport {
-    WsTransport(rc::WeakableKey key, QWebSocket* ws) :
+    WsTransport(rc::MakeStrongRef key, QWebSocket* ws) :
         // No Qt parent: the transport is owned exclusively by rc::Strong.
         QObject(nullptr),
         IAsyncTransport(key, rpcxx::Protocol::json_v2_minified),

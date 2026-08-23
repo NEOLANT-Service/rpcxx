@@ -304,19 +304,19 @@ private:
 //! base:
 //!
 //!     struct MyServer : rpcxx::Server {
-//!         MyServer(rc::WeakableKey key, int port) : Server(key), ... {}
+//!         MyServer(rc::MakeStrongRef key, int port) : Server(key), ... {}
 //!     };
 //!     auto server = rc::MakeStrong<MyServer>(8080);
 //!
 //! Stack/static allocation and raw `new` of such types then fail to compile.
 //! (For the deliberate opt-out for foreign-owned objects — e.g. Qt
 //! parent/child — see rc::foreign_owned instead.)
-using WeakableKey = WeakableVirtual::Key;
+using MakeStrongRef = WeakableVirtual::Key;
 
 //! Create a heap object immediately owned by rc::Strong — the ONLY way to
 //! construct objects derived from rc::WeakableVirtual (IHandler,
 //! IClientTransport, Server, transports, ...): their constructors require a
-//! rc::WeakableKey that only this factory can create.
+//! rc::MakeStrongRef that only this factory can create.
 template<typename T, typename... Args>
 Strong<T> MakeStrong(Args&&... args) {
     if constexpr (std::is_base_of_v<WeakableVirtual, T>) {

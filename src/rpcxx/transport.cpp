@@ -380,7 +380,7 @@ struct IAsyncTransport::Impl {
     }
 };
 
-IAsyncTransport::IAsyncTransport(rc::WeakableKey key, Protocol proto, rc::Weak<IHandler> h)
+IAsyncTransport::IAsyncTransport(rc::MakeStrongRef key, Protocol proto, rc::Weak<IHandler> h)
     : IClientTransport(key)
 {
     d->handler = h;
@@ -600,7 +600,7 @@ void IClientTransport::DoHandleNotify(Request& req) noexcept try {
     error("Client => forward notify", e);
 }
 
-Transport::Transport(rc::WeakableKey key, Protocol proto) : IAsyncTransport(key, proto)
+Transport::Transport(rc::MakeStrongRef key, Protocol proto) : IAsyncTransport(key, proto)
 {
 
 }

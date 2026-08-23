@@ -343,7 +343,7 @@ TEST_CASE("rpc: async completion after server destruction") {
     // in ~Server and would just drop the job).
     struct ExtExecServer : TestServer {
         rc::Strong<fut::Executor> ext;
-        ExtExecServer(rc::WeakableKey key, rc::Strong<fut::Executor> e)
+        ExtExecServer(rc::MakeStrongRef key, rc::Strong<fut::Executor> e)
             : TestServer(key), ext(std::move(e)) {}
     protected:
         fut::Executor* GetExecutor() const noexcept override { return ext.get(); }

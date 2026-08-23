@@ -174,7 +174,7 @@ Executor *Server::GetExecutor() const noexcept
     return d->exec.get();
 }
 
-rpcxx::Server::Server(rc::WeakableKey key) : IHandler(key), d() {
+rpcxx::Server::Server(rc::MakeStrongRef key) : IHandler(key), d() {
 
 }
 

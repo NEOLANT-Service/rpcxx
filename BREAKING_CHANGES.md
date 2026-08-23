@@ -36,7 +36,7 @@ Enforcement:
 
 - **Passkey construction (compile-time, airtight):** `rc::WeakableVirtual`
   has a single constructor taking `rc::WeakableVirtual::Key` (aliased as
-  `rc::WeakableKey`), a passkey type whose constructor is private and
+  `rc::MakeStrongRef`), a passkey type whose constructor is private and
   befriended only to `rc::MakeStrong`. Every subclass must therefore accept
   the key as its first constructor parameter and pass it down the chain, and
   the only way to obtain one is `rc::MakeStrong<T>(args...)` — which
@@ -64,9 +64,9 @@ struct MyServer : rpcxx::Server {
     MyServer(int port) : port(port) {}
 };
 
-// after — take rc::WeakableKey first and forward it to the base
+// after — take rc::MakeStrongRef first and forward it to the base
 struct MyServer : rpcxx::Server {
-    MyServer(rc::WeakableKey key, int port) : Server(key), port(port) {}
+    MyServer(rc::MakeStrongRef key, int port) : Server(key), port(port) {}
 };
 
 auto server = rc::MakeStrong<MyServer>(8080);   // unchanged call site
