@@ -296,6 +296,21 @@ private:
     Strong<WeakBlock> block;
 };
 
+//! Passkey for constructing rc::WeakableVirtual subclasses. Its constructor
+//! is private and befriended only to rc::MakeStrong, so a weakable type can
+//! only be created through rc::MakeStrong<T>(args...) — which heap-allocates
+//! it and immediately hands ownership to rc::Strong. Declare your subclass
+//! constructors with the key as the first parameter and forward it to the
+//! base:
+//!
+//!     struct MyServer : rpcxx::Server {
+//!         MyServer(rc::WeakableKey key, int port) : Server(key), ... {}
+//!     };
+//!     auto server = rc::MakeStrong<MyServer>(8080);
+//!
+//! Stack/static allocation and raw `new` of such types then fail to compile.
+//! (For the deliberate opt-out for foreign-owned objects — e.g. Qt
+//! parent/child — see rc::foreign_owned instead.)
 using WeakableKey = WeakableVirtual::Key;
 
 //! Create a heap object immediately owned by rc::Strong — the ONLY way to
