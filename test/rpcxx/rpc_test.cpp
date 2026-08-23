@@ -338,24 +338,45 @@ TEST_CASE("rpc: SetRoute rejects route cycles") {
 // exception-handler path (Server::Wrap and Server::OnForward).
 TEST_CASE("rpc: async completion after server destruction") {
     fut::SharedPromise<std::string> pending;
-    rc::Strong<MockTransport> tr;
-    rc::Strong<Server> router;
+    // An executor that outlives the server, so the async continuation still
+    // runs after the server is gone (the default server executor is stopped
+    // in ~Server and would just drop the job).
+    struct ExtExecServer : TestServer {
+        rc::Strong<fut::Executor> ext;
+        ExtExecServer(rc::WeakableKey key, rc::Strong<fut::Executor> e)
+            : TestServer(key), ext(std::move(e)) {}
+    protected:
+        fut::Executor* GetExecutor() const noexcept override { return ext.get(); }
+    };
+    auto extExec = rc::MakeStrong<fut::StoppableExecutor>();
+    auto router = rc::MakeStrong<Server>();
+    rc::Strong<MockTransport> tr = rc::MakeStrong<MockTransport>(
+        Protocol::json_v2_compliant, router);
+    tr->fmt = json;
+    Future<std::string> f;
     {
-        rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+        rc::Strong<TestServer> server = rc::MakeStrong<ExtExecServer>(extExec);
         std::reference_wrapper<fut::SharedPromise<std::string>> ref(pending);
         server->Method("deferred", [ref]() -> Future<std::string> {
             return ref.get().GetFuture();
         });
-        router = rc::MakeStrong<Server>();
         router->SetRoute("r", server);
-        tr = rc::MakeStrong<MockTransport>(Protocol::json_v2_compliant, router);
-        tr->fmt = json;
-    } // the method server is gone; only weak references remain
+        Client cli;
+        cli.SetTransport(tr);
+        // Issue the request while the method server is alive, so the method
+        // actually runs and suspends on the pending promise.
+        f = cli.Request<std::string>(Method{"r/deferred", NoTimeout});
+    } // the method server is destroyed with the request still in flight
 
-    Client cli;
-    cli.SetTransport(tr);
-    auto f = cli.Request<std::string>(Method{"r/deferred", NoTimeout});
-    (void)std::exchange(router, nullptr); // the router is gone too
-    pending(std::runtime_error("late failure")); // must not touch dead servers
-    CHECK_THROWS(ToStdFuture(std::move(f)).get());
+    // Wrap runs with a dead server: must not touch it, and must not leak the
+    // raw exception text to the client — exception handlers exist to hide
+    // such details, so a sanitized generic error is sent instead.
+    pending(std::runtime_error("late failure"));
+    try {
+        ToStdFuture(std::move(f)).get();
+        FAIL("expected the late rejection to surface as an error");
+    } catch (RpcException& e) {
+        CHECK(e.message == "Server dead");
+        CHECK(e.code == ErrorCode::internal);
+    }
 }

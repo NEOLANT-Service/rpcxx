@@ -115,6 +115,13 @@ thread itself nothing changes.
   `IAsyncTransport::Receive()`** (and no longer produce error parts inside
   batch responses); they are logged via `error()` after the server's
   exception handlers have run.
+- **Async methods rejected after their `Server` was destroyed** now fail the
+  client request with a sanitized `RpcException("Server dead", internal)`
+  instead of forwarding the raw, unwrapped exception — exception handlers
+  exist precisely to hide such details from the client, and forwarding
+  bypassed them. (With the default server executor the continuation is
+  dropped at server teardown and the client sees a generic
+  `FutureError("Broken Promise")` — also free of sensitive details.)
 
 ## 6. Build system
 

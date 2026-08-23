@@ -215,13 +215,16 @@ private:
             }
         } catch (std::exception& e) {
             // An async method may resolve after the Server was destroyed:
-            // use its exception handlers only while it is still alive,
-            // otherwise forward the exception unmodified.
+            // use its exception handlers only while it is still alive. When
+            // it is gone, do NOT forward the raw exception — exception
+            // handlers exist to hide sensitive details from the client, and
+            // bypassing them here would leak the unwrapped error. Reject
+            // with a sanitized generic error instead.
             if (rc::Strong<Server> s = self.lock()) {
                 auto over = s->excHandlers("", method, std::move(ctx), e);
                 cb(over ? std::move(over) : std::current_exception());
             } else {
-                cb(std::current_exception());
+                cb(std::make_exception_ptr(RpcException("Server dead", ErrorCode::internal)));
             }
         }
     };
