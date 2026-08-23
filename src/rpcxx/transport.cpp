@@ -119,13 +119,14 @@ struct IAsyncTransport::Impl {
         using F = Fields<proto>;
         TraceFrame root;
         TraceFrame reqFrame("<request>", root);
-        auto id = req.Value(F::Id, JsonView{}, reqFrame);
+        const JsonView* idPtr = req.FindVal(F::Id);
         auto p = req.Value(F::Params, EmptyArray(), reqFrame);
         Request prepReq{alloc};
         prepReq.method = Method{method, rpcxx::NoTimeout};
         prepReq.params = p;
         prepReq.context = ctx;
-        if (id.Is(t_null)) {
+        if (!idPtr) {
+            // No 'id' member: a notification — no response is ever sent.
             if (auto h = getHandler(self)) {
                 try {
                     h->HandleNotify(prepReq);
@@ -135,15 +136,28 @@ struct IAsyncTransport::Impl {
                     error("HandleNotify (" + string{method} + ')', e);
                 }
             }
-        } else {
-            Promise<JsonView> cb;
-            cb.GetFuture()
-                .AtLast(exec, [self, id = jv::Json(id)](auto result) mutable noexcept {
-                    sendResult<proto>(self, id.View(), result);
-                });
-            if (auto h = getHandler(self)) {
-                h->Handle(prepReq, std::move(cb));
+            return;
+        }
+        auto id = *idPtr;
+        if (meta_Unlikely(id.Is(t_null))) {
+            // "id": null is not a notification but an invalid Request object;
+            // JSON-RPC 2.0 answers it with an Invalid Request error (id null).
+            try {
+                Formatter<proto> fmt;
+                RpcException err("The 'id' must not be null", ErrorCode::invalid_request);
+                self->Send(fmt.MakeError(JsonView{}, err));
+            } catch (std::exception& e) {
+                error("send null-id error", e);
             }
+            return;
+        }
+        Promise<JsonView> cb;
+        cb.GetFuture()
+            .AtLast(exec, [self, id = jv::Json(id)](auto result) mutable noexcept {
+                sendResult<proto>(self, id.View(), result);
+            });
+        if (auto h = getHandler(self)) {
+            h->Handle(prepReq, std::move(cb));
         }
     }
 
@@ -215,14 +229,15 @@ struct IAsyncTransport::Impl {
         for (auto part: req.Array(false)) {
             try {
                 TraceFrame frame(idx++, batchFrame);
-                auto id = part.Value(F::Id, JsonView{}, frame);
+                const JsonView* idPtr = part.FindVal(F::Id);
                 auto p = part.Value(F::Params, EmptyArray(), frame);
                 auto method = part.At(F::Method, frame).GetString(TraceFrame(F::Method, frame));
                 Request req{alloc};
                 req.method = Method{method, rpcxx::NoTimeout};
                 req.params = p;
                 req.context = ctx;
-                if (id.Is(t_null)) {
+                if (!idPtr) {
+                    // No 'id' member: a notification — never answered.
                     try {
                         h->HandleNotify(req);
                     } catch (std::exception& e) {
@@ -231,7 +246,15 @@ struct IAsyncTransport::Impl {
                         // part or letting the exception escape Receive().
                         error("HandleNotify (" + string{method} + ')', e);
                     }
+                } else if (meta_Unlikely(idPtr->Is(t_null))) {
+                    // "id": null is an invalid Request object, not a
+                    // notification: answer it with an error part (id null).
+                    Formatter<proto> fmt;
+                    RpcException err("The 'id' must not be null", ErrorCode::invalid_request);
+                    std::lock_guard lk(batch->mut);
+                    batch->parts.push_back(Copy(fmt.MakeError(nullptr, err), batch->alloc));
                 } else {
+                    auto id = *idPtr;
                     Promise<JsonView> cb;
                     cb.GetFuture()
                         .AtLast(exec, [batch, id = Json(id)](auto result) mutable noexcept {

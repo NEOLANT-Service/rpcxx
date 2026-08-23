@@ -279,3 +279,36 @@ TEST_CASE("rpc: notify handler exceptions are contained") {
     }
     CHECK(hits == 1);
 }
+
+struct RecordingTransport : IAsyncTransport {
+    using IAsyncTransport::IAsyncTransport;
+    std::vector<std::string> sent;
+    void Send(JsonView msg) override {
+        sent.push_back(jv::DumpJson(msg));
+    }
+};
+
+// "id": null is an invalid Request object, not a notification: JSON-RPC 2.0
+// answers it with an Invalid Request error (id null). Only a request with NO
+// 'id' member is a notification.
+TEST_CASE("rpc: null id is an invalid request, not a notification") {
+    rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+    bool notified = false;
+    server->Notify("ping_notif", [&]{ notified = true; });
+    rc::Strong<RecordingTransport> tr = rc::MakeStrong<RecordingTransport>(
+        Protocol::json_v2_compliant, server);
+
+    jv::DefaultArena arena;
+    tr->Receive(jv::ParseJson(R"({"jsonrpc":"2.0","method":"ping_notif","id":null})", arena));
+    CHECK(!notified);
+    REQUIRE(tr->sent.size() == 1);
+    jv::DefaultArena arena2;
+    auto resp = jv::ParseJson(tr->sent.back(), arena2);
+    CHECK(resp.At("id").Is(t_null));
+    CHECK(resp.At("error").At("code").Get<int>() == int(ErrorCode::invalid_request));
+
+    // No 'id' member: a notification — handler called, no response sent.
+    tr->Receive(jv::ParseJson(R"({"jsonrpc":"2.0","method":"ping_notif"})", arena));
+    CHECK(notified);
+    CHECK(tr->sent.size() == 1);
+}
