@@ -92,8 +92,10 @@ static void parseTokens(
     if (isUri) {
         idx++;
     }
-    if (*src == sep) {
+    bool hadSep = false;
+    if (idx < len && src[idx] == sep) {
         idx++;
+        hadSep = true;
     }
     auto append = [&](char ch){
         (void)cap; assert(ptr < cap);
@@ -121,6 +123,7 @@ static void parseTokens(
             } else {
                 throw std::runtime_error("Invalid escape in Json Pointer");
             }
+            escape = false;
         } else if (ch == '~') {
             escape = true;
         } else {
@@ -141,6 +144,11 @@ static void parseTokens(
             add_token();
         }
     }
+    // The input was exactly the separator ("/" or "#/"): per RFC 6901 that is
+    // a single empty-string token, and nothing was emitted above.
+    if (toks == 0 && hadSep) {
+        add_token();
+    }
 }
 
 }
@@ -153,8 +161,17 @@ JsonPointer JsonPointer::FromString(string_view ptr, Arena &alloc, char sep)
     if (ptr.size() >= (std::numeric_limits<unsigned>::max)()) {
         throw std::runtime_error("json pointer is too big");
     }
-    auto count = unsigned(std::count(ptr.begin(), ptr.end(), sep));
-    if (ptr[0] != sep) count++;
+    // Token count is computed over the body after the optional '#' (URI form)
+    // and the leading separator, matching the skips in parseTokens().
+    string_view body = ptr;
+    if (body[0] == '#') {
+        body = body.substr(1);
+    }
+    if (body.empty()) {
+        return {}; // "#" — the root pointer
+    }
+    auto count = unsigned(std::count(body.begin(), body.end(), sep));
+    if (body[0] != sep) count++;
     ArenaString storage(alloc);
     storage.reserve(ptr.size() + 1 + count);
     auto tokens = static_cast<JsonKey*>(alloc(sizeof(JsonKey) * count, alignof(JsonKey)));

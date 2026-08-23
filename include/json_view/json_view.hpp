@@ -886,31 +886,11 @@ protected:
 };
 
 namespace detail {
-struct fieldHelper {
-    string_view name;
-    bool hit = {};
-    bool required = {};
-};
-
 template<typename F>
 constexpr bool isRequired() {
     constexpr bool is_opt = describe::has_v<SkipMissing, typename F::cls>
                             || is_optional<typename F::type>::value;
     return !is_opt;
-}
-
-template<typename Cls>
-constexpr auto prepFields() {
-    constexpr auto desc = describe::Get<Cls>();
-    std::array<fieldHelper, desc.fields_count> res = {};
-    size_t idx = 0;
-    desc.for_each_field([&](auto field){
-        auto curr = res[idx++];
-        curr.name = field.name;
-        curr.hit = false;
-        curr.required = isRequired<decltype(field)>();
-    });
-    return res;
 }
 
 template<typename Validator, typename T>

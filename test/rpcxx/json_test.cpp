@@ -491,4 +491,33 @@ TEST_CASE("ub regressions")
         out.Write("abc", 3);
         CHECK(out.Consume() == "abc");
     }
+    SUBCASE("JsonPointer edge cases") {
+        DefaultArena alloc;
+        // "/" is a single empty-string token (RFC 6901), not garbage
+        auto root1 = JsonPointer::FromString("/", alloc);
+        CHECK(root1.size == 1);
+        CHECK(root1.Join() == "/");
+        // "#/" (URI form) likewise; "#" is the root pointer
+        CHECK(JsonPointer::FromString("#/", alloc).Join() == "/");
+        CHECK(JsonPointer::FromString("#", alloc).size == 0);
+        CHECK(JsonPointer::FromString("", alloc).size == 0);
+        // escape sequences (~0 -> '~', ~1 -> '/') must not stick
+        CHECK(JsonPointer::FromString("/a~0b~1c", alloc).Join() == "/a~0b~1c");
+        // URI form: the leading '/' after '#' is skipped
+        CHECK(JsonPointer::FromString("#/a", alloc).Join() == "/a");
+        // ordinary round-trips
+        CHECK(JsonPointer::FromString("/a/b", alloc).Join() == "/a/b");
+        CHECK(JsonPointer::FromString("/0/1", alloc).Join() == "/0/1");
+    }
+    SUBCASE("MutableJson deep-copies an Array lvalue") {
+        // This constructor used to be dead code with a typo (emlace_back).
+        MutableJson::Array arr;
+        arr.emplace_back(1);
+        arr.emplace_back("two");
+        MutableJson cp(arr);
+        DefaultArena alloc;
+        REQUIRE(cp.GetArray().size() == 2);
+        CHECK(cp.GetArray()[0].View(alloc).Get<int>() == 1);
+        CHECK(cp.GetArray()[1].View(alloc).GetString() == "two");
+    }
 }

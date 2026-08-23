@@ -114,11 +114,7 @@ struct BasicMutJson {
     }
     BasicMutJson(Array const& v, unsigned depth = JV_DEFAULT_DEPTH) noexcept : BasicMutJson(t_array) {
         DepthError::Check(depth--);
-        auto& out = GetArray();
-        out.reserve(v.size());
-        for (auto& i: v) {
-            copy(out.emlace_back(), i, depth);
-        }
+        copy(GetArray(), v, depth);
     }
     BasicMutJson(Object const& v, unsigned depth = JV_DEFAULT_DEPTH) noexcept : BasicMutJson(t_object) {
         DepthError::Check(depth--);
