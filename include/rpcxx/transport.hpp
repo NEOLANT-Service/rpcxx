@@ -51,8 +51,8 @@ struct IClientTransport : IHandler {
     virtual void SendBatch(Batch batch) = 0;
     virtual void SendNotify(string_view method, JsonView params) = 0;
     virtual void SendMethod(Method method, JsonView params, Promise<JsonView> cb) = 0;
-    virtual ~IClientTransport() = default;
 protected:
+    virtual ~IClientTransport() = default;
     void DoHandle(Request& req, Promise<JsonView> cb) noexcept override;
     void DoHandleNotify(Request& req) noexcept override;
 };
@@ -65,6 +65,10 @@ protected:
     void SendBatch(Batch batch) override;
     void SendNotify(string_view method, JsonView params) override;
     void SendMethod(Method method, JsonView params, Promise<JsonView> cb) override;
+private:
+    // Final class: private dtor forbids stack allocation outright. Create via
+    // rc::MakeStrong<ForwardToHandler>(...); destroyed only by rc::Strong.
+    ~ForwardToHandler() override = default;
 };
 
 //! Bidirectional transport for both server (any IHandler) and Client
@@ -77,9 +81,11 @@ struct IAsyncTransport : IClientTransport {
     void Receive(JsonView msg, ContextPtr ctx);
     void Receive(JsonView msg);
 
-    ~IAsyncTransport() override;
     IAsyncTransport(const IAsyncTransport&) = delete;
     IAsyncTransport(IAsyncTransport&&) = delete;
+protected:
+    // Protected: transports must live on the heap, owned by rc::Strong.
+    ~IAsyncTransport() override;
 protected:
     // These should be used/implemented by subclass
     virtual void Send(JsonView msg) = 0;
@@ -105,6 +111,10 @@ protected:
     void Send(JsonView msg) override;
 
     Sender sender;
+private:
+    // Final class: private dtor forbids stack allocation outright. Create via
+    // rc::MakeStrong<Transport>(...); destroyed only by rc::Strong.
+    ~Transport() override = default;
 };
 
 }

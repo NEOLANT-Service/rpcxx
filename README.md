@@ -13,17 +13,18 @@ into typed server and client stubs, and a handful of reusable header-only
 sub-libraries (futures, a zero-copy JSON DOM, ref-counting, buffers).
 
 ```cpp
-rpcxx::Server server;
+// Servers (and transports) are heap objects owned by rc::Strong
+auto server = rc::MakeStrong<rpcxx::Server>();
 
 // Params received positionally (JSON array)
-server.Method("add", [](int a, int b){ return a + b; });
+server->Method("add", [](int a, int b){ return a + b; });
 
 // Params received by name (JSON object)
-server.Method("sub", [](int a, int b){ return a - b; },
-              rpcxx::NamesMap("a", "b"));
+server->Method("sub", [](int a, int b){ return a - b; },
+               rpcxx::NamesMap("a", "b"));
 
 // Async method: return a Future and resolve it whenever you like
-server.Method("slow_add", [](int a, int b) -> rpcxx::Future<int> {
+server->Method("slow_add", [](int a, int b) -> rpcxx::Future<int> {
     return rpcxx::Future<int>::FromFunction([=](auto promise){
         std::thread([=]() mutable { promise(a + b); }).detach();
     });
@@ -135,11 +136,11 @@ using `ForwardToHandler`:
 #include <future/to_std_fut.hpp>
 using namespace rpcxx;
 
-Server server;
-server.Method("add", [](int a, int b){ return a + b; });
+auto server = rc::MakeStrong<Server>();
+server->Method("add", [](int a, int b){ return a + b; });
 
 Client client;
-rc::Strong<IClientTransport> link = new ForwardToHandler(&server);
+rc::Strong<IClientTransport> link = rc::MakeStrong<ForwardToHandler>(server);
 client.SetTransport(link);
 
 int sum = ToStdFuture(
@@ -157,21 +158,21 @@ int sum = ToStdFuture(
 fire-and-forget handler (no response). Both accept any callable.
 
 ```cpp
-Server server;
+auto server = rc::MakeStrong<Server>();
 
-server.Method("ping", []{ return "pong"; });
-server.Method("add",  [](int a, int b){ return a + b; });
-server.Notify("log",  [](std::string line){ /* ... */ });
+server->Method("ping", []{ return "pong"; });
+server->Method("add",  [](int a, int b){ return a + b; });
+server->Notify("log",  [](std::string line){ /* ... */ });
 ```
 
 **Optional parameters** use `std::optional`; **custom types** just need a
 `DESCRIBE` (see below):
 
 ```cpp
-server.Method("add", [](int a, std::optional<int> b){
+server->Method("add", [](int a, std::optional<int> b){
     return a + b.value_or(0);
 });
-server.Method("copy", [](MyStruct s){ return s; });
+server->Method("copy", [](MyStruct s){ return s; });
 ```
 
 ### Positional vs. named parameters
@@ -180,16 +181,16 @@ By default parameters are read positionally (from a JSON array). Pass a
 `NamesMap` to read them by name (from a JSON object) instead:
 
 ```cpp
-server.Method("sub", [](int a, int b){ return a - b; },
-              rpcxx::NamesMap("a", "b"));
+server->Method("sub", [](int a, int b){ return a - b; },
+               rpcxx::NamesMap("a", "b"));
 ```
 
 To take the **whole params object as a single struct**, use `PackParams<T>`
 (the field names of `T` become the parameter names):
 
 ```cpp
-server.Method("configure", [](Config cfg){ /* ... */ },
-              rpcxx::PackParams<Config>());
+server->Method("configure", [](Config cfg){ /* ... */ },
+               rpcxx::PackParams<Config>());
 ```
 
 ### Member functions
@@ -209,13 +210,17 @@ struct MyServer : rpcxx::Server {
 };
 ```
 
+Like `Server` itself, subclasses must be heap-allocated and owned by
+`rc::Strong` (`auto srv = rc::MakeStrong<MyServer>();`) — see
+[Ref-counting](#ref-counting-includerc).
+
 ### Async handlers
 
 Return a `Future<T>` to answer later. The server holds the response open until
 the future resolves (or rejects, which is turned into a JSON-RPC error):
 
 ```cpp
-server.Method("async_ping", [](std::string s) -> rpcxx::Future<std::string> {
+server->Method("async_ping", [](std::string s) -> rpcxx::Future<std::string> {
     Promise<std::string> p;
     auto fut = p.GetFuture();
     std::thread([p = std::move(p)]() mutable { p("pong"); }).detach();
@@ -232,21 +237,21 @@ A server can mount other handlers under named routes (addressed with
 JSON-pointer-like paths). Leading/trailing/duplicate slashes are tolerated:
 
 ```cpp
-server.SetRoute("self", &server);
+server->SetRoute("self", server);
 // now reachable as "self/add", "/self/add", "/////self///add//", ...
 ```
 
 ### Middleware, context and exceptions
 
 ```cpp
-server.AddMiddleware([](Request& req){ /* runs before every call */ });
-server.AddRouteMiddleware([](string_view route, Request& req){ /* ... */ });
+server->AddMiddleware([](Request& req){ /* runs before every call */ });
+server->AddRouteMiddleware([](string_view route, Request& req){ /* ... */ });
 
 // Per-call key/value scratch space (see include/rpcxx/context.hpp)
-ContextPtr ctx = server.CurrentContext();
+ContextPtr ctx = server->CurrentContext();
 
 // Translate C++ exceptions into RPC errors (return a replacement to override)
-server.AddExceptionHandler([](ExceptionContext& ec){
+server->AddExceptionHandler([](ExceptionContext& ec){
     // inspect ec.method / ec.exception, log, etc.
 });
 ```
@@ -311,24 +316,24 @@ A transport is the only component that touches your I/O. Implementations of
   perfect for hooking into an existing event loop:
 
 ```cpp
-Server server;
-server.Method("add", [](int a, int b){ return a + b; });
+auto server = rc::MakeStrong<Server>();
+server->Method("add", [](int a, int b){ return a + b; });
 
-Transport transport(Protocol::json_v2_compliant);
-transport.SetHandler(&server);                 // route inbound requests here
+auto transport = rc::MakeStrong<Transport>(Protocol::json_v2_compliant);
+transport->SetHandler(server);               // route inbound requests here
 
-transport.OnReply([&](JsonView outgoing){      // outbound: serialize & ship
-    my_socket.send(jv::DumpJson(outgoing));     // or DumpMsgPack(outgoing)
+transport->OnReply([&](JsonView outgoing){   // outbound: serialize & ship
+    my_socket.send(jv::DumpJson(outgoing));  // or DumpMsgPack(outgoing)
 });
 
 // inbound: feed received bytes back in
 my_socket.onMessage([&](std::string_view bytes){
     jv::DefaultArena arena;
-    transport.Receive(jv::ParseJson(bytes, arena));
+    transport->Receive(jv::ParseJson(bytes, arena));
 });
 ```
 
-The same `Transport` can also drive a `Client` (`client.SetTransport(&transport)`),
+The same `Transport` can also drive a `Client` (`client.SetTransport(transport)`),
 which is how rpcxx supports bidirectional RPC over a single connection. See
 [`test/rps`](test/rps) for a complete Qt WebSocket client/server using
 MessagePack.
@@ -490,6 +495,15 @@ auto back = parsed.View().Get<My>();
 Intrusive smart pointers: `rc::Strong<T>` / `rc::Weak<T>` with base classes
 (`DefaultBase`, `SingleVirtualBase`, `WeakableVirtual`). Used throughout for
 transports and shared state.
+
+Ownership rule: any object that takes part in a `rc::Weak` reference (servers,
+handlers, transports, executors) must be heap-allocated and owned by an
+`rc::Strong` from the moment it is shared — create them with
+`rc::MakeStrong<T>(...)`. `rc::Weak::lock()` is the only way to dereference a
+weak reference; it returns a `Strong` that keeps the object alive during use
+and refuses objects that are not `rc::Strong`-owned (assert in debug builds),
+which makes stack-allocated handlers/transports fail loudly instead of
+corrupting memory.
 
 ### Buffers (`include/membuff`)
 

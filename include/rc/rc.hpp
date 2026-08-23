@@ -26,6 +26,7 @@ SOFTWARE.
 #define RC_HPP
 
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <type_traits>
 #include <utility>
@@ -100,6 +101,8 @@ struct DefaultBase {
             delete d;
         }
     }
+    // Weak::lock() reads _refs to refuse objects that no rc::Strong owns.
+    template<typename> friend struct Weak;
 protected:
     std::atomic<int> _refs{0};
     std::atomic_bool _sync{false};
@@ -196,21 +199,33 @@ struct Weak {
     template<typename U, if_compatible<U> = 1>
     Weak(Strong<U> const& obj) : Weak(obj.get()) {}
 
-    T* peek() const noexcept {
-        if (!block) return nullptr;
-        // After expiry data is nullptr; adding offset to it would produce a
-        // garbage non-null pointer for non-zero offsets (multiple/virtual
-        // inheritance), so null-check BEFORE applying the offset.
-        char* p = block->data.load(std::memory_order_acquire);
-        return p ? reinterpret_cast<T*>(p + offset) : nullptr;
-    }
+    //! Lock the weak reference into a strong one. Returns nullptr when the
+    //! object has expired — and also when the object is alive but NOT owned
+    //! by any rc::Strong (e.g. stack- or statically-allocated): locking such
+    //! an object would make the temporary Strong delete stack memory on
+    //! destruction, so it is refused (assert in debug builds). Objects that
+    //! take part in weak references must be heap-allocated and owned via
+    //! rc::Strong from the moment they are published — see rc::MakeStrong.
     Strong<T> lock() const noexcept {
         if (!block) return nullptr;
         _lock(block->_sync);
         // The spinlock makes load+AddRef atomic w.r.t. WeakableVirtual::Unref
-        // reaching zero: an object whose block was nulled stays dead.
+        // reaching zero: an object whose block was nulled stays dead. Since
+        // Unref nulls the block in the same critical section that drops the
+        // refcount to zero, a non-null pointer here implies _refs >= 1 for
+        // any properly rc-owned object; _refs == 0 therefore means the object
+        // was never owned by a Strong.
         char* p = block->data.load(std::memory_order_acquire);
-        Strong<T> r = p ? reinterpret_cast<T*>(p + offset) : nullptr;
+        Strong<T> r = nullptr;
+        if (p) {
+            T* obj = reinterpret_cast<T*>(p + offset);
+            if (obj->_refs.load(std::memory_order_relaxed) != 0) {
+                r = obj;
+            } else {
+                assert(!"rc::Weak::lock() on an object not owned by rc::Strong "
+                        "(stack/static allocation or published before ownership)");
+            }
+        }
         _unlock(block->_sync);
         return r;
     }
@@ -218,6 +233,14 @@ private:
     int offset{};
     Strong<WeakBlock> block;
 };
+
+//! Create a heap object immediately owned by rc::Strong — the required way
+//! to allocate objects that take part in rc::Weak references (IHandler,
+//! IClientTransport, Server, transports, executors, ...).
+template<typename T, typename... Args>
+Strong<T> MakeStrong(Args&&... args) {
+    return Strong<T>(new T(std::forward<Args>(args)...));
+}
 
 }
 

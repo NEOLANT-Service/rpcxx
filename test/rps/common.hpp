@@ -28,7 +28,8 @@ SOFTWARE.
 
 struct WsTransport final : public QObject, rpcxx::IAsyncTransport {
     WsTransport(QWebSocket* ws) :
-        QObject(ws),
+        // No Qt parent: the transport is owned exclusively by rc::Strong.
+        QObject(nullptr),
         IAsyncTransport(rpcxx::Protocol::json_v2_minified),
         sock(ws)
     {

@@ -42,7 +42,8 @@ class TestClient final: public QObject, public rpcxx::Client
 public:
     TestClient(QWebSocket* sock) : sock(sock)
     {
-        SetTransport(new WsTransport(sock));
+        transport = rc::MakeStrong<WsTransport>(sock);
+        SetTransport(transport);
         connect(sock, &QWebSocket::binaryMessageReceived, this, [&](const QByteArray& frame){
             DefaultArena alloc;
             auto msg = ParseMsgPackInPlace({frame.constData(), unsigned(frame.size())}, alloc);
@@ -53,6 +54,7 @@ public:
     }
 
     QWebSocket* sock;
+    rc::Strong<WsTransport> transport;
     Promise<Json> prom;
 };
 

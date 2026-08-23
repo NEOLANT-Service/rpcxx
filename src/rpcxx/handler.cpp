@@ -65,8 +65,8 @@ void IHandler::SetRoute(string_view route, rc::Weak<IHandler> handler)
     if (route.find_first_of('/') != string_view::npos) {
         throw std::runtime_error("Route name must not contain any '/'");
     }
-    if (auto h = handler.peek()) {
-        d->routes[string{route}] = h;
+    if (handler.lock()) {
+        d->routes[string{route}] = handler;
     } else {
         auto it = d->routes.find(route);
         if (it != d->routes.end()) {
@@ -101,7 +101,7 @@ static string_view sanitizeSlashes(string& storage, string_view method) {
     return res.size() && res.front() == '/' ? res.substr(1) : res;
 }
 
-static IHandler* tryRoute(string& storage, AllRoutes& rs, string_view& method, string_view& outRoute) {
+static rc::Strong<IHandler> tryRoute(string& storage, AllRoutes& rs, string_view& method, string_view& outRoute) {
     auto raw = sanitizeSlashes(storage, method);
     method = raw;
     auto pos = raw.find_first_of('/');
@@ -109,7 +109,7 @@ static IHandler* tryRoute(string& storage, AllRoutes& rs, string_view& method, s
     std::string_view maybeRoute = raw.substr(0, pos);
     auto it = rs.find(maybeRoute);
     if (it == rs.end()) return nullptr;
-    auto h = it->second.peek();
+    auto h = it->second.lock();
     if (!h) return nullptr;
     outRoute = maybeRoute;
     method = raw.substr(pos + 1);

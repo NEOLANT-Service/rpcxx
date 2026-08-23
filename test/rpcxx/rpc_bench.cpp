@@ -37,7 +37,7 @@ enum format {
 };
 
 struct MsgPackTr : IAsyncTransport {
-    MsgPackTr(Protocol proto, IHandler* h) : IAsyncTransport(proto, h) {}
+    MsgPackTr(Protocol proto, rc::Weak<IHandler> h) : IAsyncTransport(proto, h) {}
     void Send(JsonView msg) override {
         membuff::StringOut out;
         DumpMsgPackInto(out, msg);
@@ -49,7 +49,7 @@ struct MsgPackTr : IAsyncTransport {
 };
 
 struct JsonTr : IAsyncTransport {
-    JsonTr(Protocol proto, IHandler* h) : IAsyncTransport(proto, h) {}
+    JsonTr(Protocol proto, rc::Weak<IHandler> h) : IAsyncTransport(proto, h) {}
     void Send(JsonView msg) override {
         membuff::StringOut out;
         DumpJsonInto(out, msg);
@@ -63,15 +63,16 @@ struct JsonTr : IAsyncTransport {
 template<typename...Args>
 static void Notify(benchmark::State& state, std::string_view method, Args&&...args) {
     auto proto = Protocol(state.range(0));
-    auto serv = TestServer();
-    auto cli = Client([&]() -> IClientTransport* {
+    auto serv = rc::MakeStrong<TestServer>();
+    rc::Strong<IClientTransport> tr = [&]() -> rc::Strong<IClientTransport> {
         switch (format(state.range(1))) {
-        case direct: return new ForwardToHandler(&serv);
-        case msgpack: return new MsgPackTr(proto, &serv);
-        case json: return new JsonTr(proto, &serv);
+        case direct: return rc::MakeStrong<ForwardToHandler>(serv);
+        case msgpack: return rc::MakeStrong<MsgPackTr>(proto, serv);
+        case json: return rc::MakeStrong<JsonTr>(proto, serv);
         }
         return nullptr;
-    }());
+    }();
+    auto cli = Client(tr);
     for (auto _ : state) {
         try {
             cli.Notify(method, args...);
@@ -83,15 +84,16 @@ static void Notify(benchmark::State& state, std::string_view method, Args&&...ar
 template<typename Ret, typename...Args>
 static void RunMethod(benchmark::State& state, Ret&&, string_view method, Args&&...args) {
     auto proto = Protocol(state.range(0));
-    auto serv = TestServer();
-    auto cli = Client([&]() -> IClientTransport* {
+    auto serv = rc::MakeStrong<TestServer>();
+    rc::Strong<IClientTransport> tr = [&]() -> rc::Strong<IClientTransport> {
         switch (format(state.range(1))) {
-        case direct: return new ForwardToHandler(&serv);
-        case msgpack: return new MsgPackTr(proto, &serv);
-        case json: return new JsonTr(proto, &serv);
+        case direct: return rc::MakeStrong<ForwardToHandler>(serv);
+        case msgpack: return rc::MakeStrong<MsgPackTr>(proto, serv);
+        case json: return rc::MakeStrong<JsonTr>(proto, serv);
         }
         return nullptr;
-    }());
+    }();
+    auto cli = Client(tr);
     for (auto _ : state) {
         try {
             (void)cli.Request<Ret>(Method{method, NoTimeout}, args...);

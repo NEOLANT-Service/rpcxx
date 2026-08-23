@@ -88,7 +88,6 @@ struct Server : IHandler
     Server();
     Server(const Server&) = delete;
     Server(Server&&) = delete;
-    virtual ~Server();
 
     bool IsMethodRegistered(std::string_view method) const;
     std::vector<std::string> RegisteredMethods() const;
@@ -133,6 +132,12 @@ struct Server : IHandler
         doRegisterNotify(string{method}, std::move(handler), names, FuncArgs_t<Fn>{});
     }
 protected:
+    // Protected: a Server must live on the heap, owned by rc::Strong, so that
+    // rc::Weak references to it (routes, transports) can be locked safely.
+    // Create with rc::MakeStrong<Server>() (or a derived class); deletion
+    // goes through rc::Strong. Derived classes should keep their destructor
+    // protected as well — a public one re-allows (unsafe) stack allocation.
+    virtual ~Server();
     struct CallCtx {
         Request& req;
         Arena& alloc;

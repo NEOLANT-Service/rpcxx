@@ -157,13 +157,13 @@ void batchTest(Client& cli) {
 }
 
 TEST_CASE("rpc") {
-    TestServer server;
-    extraMethods(server);
+    rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+    extraMethods(*server);
     for (auto format: {direct, json, msgpack}) {
         for (auto proto: {Protocol::json_v2_compliant, Protocol::json_v2_minified}) {
             CAPTURE(PrintProto(proto));
-            rc::Strong<IClientTransport> fwd = new ForwardToHandler(&server);
-            rc::Strong<IClientTransport> send = new MockTransport(proto, &server);
+            rc::Strong<IClientTransport> fwd = rc::MakeStrong<ForwardToHandler>(server);
+            rc::Strong<IClientTransport> send = rc::MakeStrong<MockTransport>(proto, server);
             static_cast<MockTransport*>(send.get())->fmt = format;
             Client cli;
             for (auto& transport: {fwd, send}) {
@@ -183,11 +183,11 @@ TEST_CASE("rpc") {
 // resolve on their own threads and a timer thread pumps CheckTimeouts().
 // Stresses IAsyncTransport's pending-request map; run under TSAN.
 TEST_CASE("rpc: cross-thread transport stress") {
-    TestServer server;
-    extraMethods(server);
+    rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+    extraMethods(*server);
     for (auto proto: {Protocol::json_v2_compliant, Protocol::json_v2_minified}) {
         CAPTURE(PrintProto(proto));
-        rc::Strong<IClientTransport> send = new MockTransport(proto, &server);
+        rc::Strong<IClientTransport> send = rc::MakeStrong<MockTransport>(proto, server);
         auto* mock = static_cast<MockTransport*>(send.get());
         mock->fmt = json;
         std::atomic<bool> stop{false};

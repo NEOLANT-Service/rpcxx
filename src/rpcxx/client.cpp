@@ -55,7 +55,7 @@ void Client::NotifyRaw(string_view method, JsonView params) {
     if (batchActive) {
         currentBatch.notifs.push_back(RequestNotify{addPref(method, prefix), Json{params}});
     } else {
-        tr().SendNotify(addPref(method, prefix), params);
+        tr()->SendNotify(addPref(method, prefix), params);
     }
 }
 
@@ -64,19 +64,19 @@ void Client::SetPrefix(string prefix)
     this->prefix.swap(prefix);
 }
 
-IClientTransport &Client::tr() {
-    auto tr = transport.peek();
+rc::Strong<IClientTransport> Client::tr() {
+    auto tr = transport.lock();
     if (meta_Unlikely(!tr)) {
         throw ClientTransportMissing{};
     }
-    return *tr;
+    return tr;
 }
 
 void Client::batchDone() {
     if (!batchActive) {
         throw std::runtime_error("Batch was not active");
     }
-    tr().SendBatch(std::move(currentBatch));
+    tr()->SendBatch(std::move(currentBatch));
     batchActive = false;
 }
 
@@ -90,6 +90,6 @@ void Client::sendRequest(Promise<JsonView> cb, Method method, JsonView params) {
         meth.cb = std::move(cb);
         currentBatch.methods.push_back(std::move(meth));
     } else {
-        tr().SendMethod(Method{addPref(method.name, prefix), method.timeout}, params, std::move(cb));
+        tr()->SendMethod(Method{addPref(method.name, prefix), method.timeout}, params, std::move(cb));
     }
 }

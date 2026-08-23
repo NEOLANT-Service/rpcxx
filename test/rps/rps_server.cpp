@@ -44,12 +44,8 @@ public:
         sock(sock_)
     {
         conns++;
-        auto tr = new WsTransport(sock);
-        connect(sock, &QWebSocket::disconnected, [=]{
-            delete tr;
-            deleteLater();
-        });
-        tr->SetHandler(this);
+        transport = rc::MakeStrong<WsTransport>(sock);
+        transport->SetHandler(this);
         Method("calc", [](int a, int b){
             return a + b;
         });
@@ -62,6 +58,7 @@ public:
         });
     }
     QWebSocket* sock;
+    rc::Strong<WsTransport> transport;
 };
 
 int main(int argc, char *argv[])
@@ -70,7 +67,13 @@ int main(int argc, char *argv[])
     QWebSocketServer server("test", QWebSocketServer::NonSecureMode);
     app.connect(&server, &QWebSocketServer::newConnection, [&]{
         while(server.hasPendingConnections()) {
-            new TestServer(server.nextPendingConnection());
+            rc::Strong<TestServer> srv = rc::MakeStrong<TestServer>(server.nextPendingConnection());
+            QObject::connect(srv->sock, &QWebSocket::disconnected, srv.get(), [srv = std::move(srv)]() mutable {
+                // Hand ownership over to Qt's deferred deletion: the rc
+                // ownership is released here and deleteLater() destroys the
+                // object (and with it the rc-owned transport) safely.
+                srv.Release()->deleteLater();
+            });
         }
     });
     if (!server.listen(QHostAddress("0.0.0.0"), 6000)) {

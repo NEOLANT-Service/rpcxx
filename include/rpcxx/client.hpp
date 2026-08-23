@@ -92,7 +92,9 @@ struct Client
 private:
     void sendRequest(Promise<JsonView> cb, Method method, JsonView params);
     void batchDone();
-    IClientTransport& tr();
+    // Returns an owning reference: the transport is kept alive for the
+    // duration of the send call even if it is detached concurrently.
+    rc::Strong<IClientTransport> tr();
 
     bool batchActive = false;
     Batch currentBatch;

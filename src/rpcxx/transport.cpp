@@ -100,11 +100,11 @@ struct IAsyncTransport::Impl {
         error("sendResult()", e);
     }
 
-    IHandler* getHandler(IAsyncTransport* self) {
-        IHandler* h;
+    rc::Strong<IHandler> getHandler(IAsyncTransport* self) {
+        rc::Strong<IHandler> h;
         {
             std::lock_guard lk(mut);
-            h = handler.peek();
+            h = handler.lock();
         }
         if (meta_Unlikely(!h)) {
             self->NoServerFound();
@@ -497,7 +497,7 @@ void ForwardToHandler::SendBatch(Batch batch)
 void ForwardToHandler::SendNotify(string_view method, JsonView params)
 {
     DefaultArena alloc;
-    if (auto handler = h.peek(); meta_Likely(handler)) {
+    if (auto handler = h.lock(); meta_Likely(handler)) {
         Request req{alloc};
         req.method = Method{method, rpcxx::NoTimeout};
         req.params = params;
@@ -508,7 +508,7 @@ void ForwardToHandler::SendNotify(string_view method, JsonView params)
 void ForwardToHandler::SendMethod(Method method, JsonView params, Promise<JsonView> cb)
 {
     DefaultArena alloc;
-    if (auto handler = h.peek(); meta_Likely(handler)) {
+    if (auto handler = h.lock(); meta_Likely(handler)) {
         Request req{alloc};
         req.method = method;
         req.params = params;

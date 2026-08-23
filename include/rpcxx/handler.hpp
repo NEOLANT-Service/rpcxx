@@ -47,9 +47,12 @@ struct IHandler : rc::WeakableVirtual {
     void SetRoute(string_view route, rc::Weak<IHandler> handler);
     void Handle(Request& request, Promise<JsonView> cb) noexcept;
     void HandleNotify(Request& request);
-    virtual ~IHandler();
     IHandler(IHandler&&) = delete;
 protected:
+    // Protected: handlers must live on the heap, owned by rc::Strong, so that
+    // rc::Weak references (routes, transports) can be locked safely. Use
+    // rc::MakeStrong<T>() to create them. Deletion goes through rc::Strong.
+    virtual ~IHandler();
     virtual void OnForward(string_view route, Request& req, Promise<JsonView>& cb) noexcept;
     virtual void OnForwardNotify(string_view route, Request& req);
 
