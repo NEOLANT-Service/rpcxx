@@ -24,6 +24,10 @@ SOFTWARE.
 
 #include "rpcxx/handler.hpp"
 
+#include <cassert>
+#include <set>
+#include <vector>
+
 namespace rpcxx {
 
 using AllRoutes = std::map<string, rc::Weak<IHandler>, std::less<>>;
@@ -65,7 +69,33 @@ void IHandler::SetRoute(string_view route, rc::Weak<IHandler> handler)
     if (route.find_first_of('/') != string_view::npos) {
         throw std::runtime_error("Route name must not contain any '/'");
     }
-    if (handler.lock()) {
+    auto target = handler.lock();
+    if (target) {
+        if (target.get() != this) {
+            // Reject route cycles: walking the route graph from the new
+            // target must never lead back to this handler. A direct
+            // self-route (target == this) stays allowed: it is a documented
+            // feature and dispatch over it terminates, because tryRoute
+            // consumes the matched prefix at every hop.
+            std::set<IHandler*> seen{this};
+            std::vector<rc::Strong<IHandler>> worklist;
+            worklist.push_back(target);
+            while (!worklist.empty()) {
+                auto cur = std::move(worklist.back());
+                worklist.pop_back();
+                if (!seen.insert(cur.get()).second) continue;
+                for (auto& [_, sub]: cur->d->routes) {
+                    if (auto next = sub.lock()) {
+                        if (meta_Unlikely(next.get() == this)) {
+                            assert(!"SetRoute(): route cycle detected");
+                            throw std::runtime_error(
+                                "SetRoute(): adding this route would create a cycle");
+                        }
+                        worklist.push_back(std::move(next));
+                    }
+                }
+            }
+        }
         d->routes[string{route}] = handler;
     } else {
         auto it = d->routes.find(route);

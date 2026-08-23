@@ -312,3 +312,23 @@ TEST_CASE("rpc: null id is an invalid request, not a notification") {
     CHECK(notified);
     CHECK(tr->sent.size() == 1);
 }
+
+// Route cycles (a -> ... -> a through other handlers) are rejected at
+// SetRoute time; a direct self-route stays allowed.
+TEST_CASE("rpc: SetRoute rejects route cycles") {
+    auto a = rc::MakeStrong<Server>();
+    auto b = rc::MakeStrong<Server>();
+    auto c = rc::MakeStrong<Server>();
+
+    a->SetRoute("b", b);
+    CHECK_THROWS(b->SetRoute("a", a));        // 2-cycle: b.a -> a -> b
+    b->SetRoute("c", c);
+    CHECK_THROWS(c->SetRoute("a", a));        // 3-cycle: c.a -> a -> b -> c
+
+    // Direct self-route is a documented feature and must keep working.
+    CHECK_NOTHROW(a->SetRoute("self", a));
+    // Routes to expired/unset handlers remove the route as before.
+    CHECK_NOTHROW(a->SetRoute("b", nullptr));
+    // Non-cyclic chaining is fine.
+    CHECK_NOTHROW(b->SetRoute("a", a));       // a no longer routes to b
+}
