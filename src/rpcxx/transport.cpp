@@ -127,7 +127,13 @@ struct IAsyncTransport::Impl {
         prepReq.context = ctx;
         if (id.Is(t_null)) {
             if (auto h = getHandler(self)) {
-                h->HandleNotify(prepReq);
+                try {
+                    h->HandleNotify(prepReq);
+                } catch (std::exception& e) {
+                    // Notifications never produce a response; a throwing
+                    // notify handler must not escape Receive().
+                    error("HandleNotify (" + string{method} + ')', e);
+                }
             }
         } else {
             Promise<JsonView> cb;
@@ -217,7 +223,14 @@ struct IAsyncTransport::Impl {
                 req.params = p;
                 req.context = ctx;
                 if (id.Is(t_null)) {
-                    h->HandleNotify(req);
+                    try {
+                        h->HandleNotify(req);
+                    } catch (std::exception& e) {
+                        // Notifications never produce a response, not even an
+                        // error one inside a batch — log instead of adding a
+                        // part or letting the exception escape Receive().
+                        error("HandleNotify (" + string{method} + ')', e);
+                    }
                 } else {
                     Promise<JsonView> cb;
                     cb.GetFuture()

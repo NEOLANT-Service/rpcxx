@@ -249,3 +249,33 @@ TEST_CASE("rpc: send failure rejects pending requests") {
     }
     CHECK(hits == 1);
 }
+
+// A throwing notify handler must not let the exception escape Receive():
+// notifications produce no response, so the error is logged and dropped.
+TEST_CASE("rpc: notify handler exceptions are contained") {
+    rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+    extraMethods(*server);
+    server->Notify("boom", [](){ throw std::runtime_error("notify boom"); });
+    rc::Strong<MockTransport> tr = rc::MakeStrong<MockTransport>(
+        Protocol::json_v2_compliant, server);
+    tr->fmt = json;
+    Client cli;
+    cli.SetTransport(tr);
+
+    CHECK_NOTHROW(cli.Notify("boom"));
+
+    // A batch with a throwing notify part still answers its method parts.
+    int hits = 0;
+    {
+        auto b = cli.StartBatch();
+        cli.Notify("boom");
+        cli.Request<int>(Method{"add", NoTimeout}, 1, 2)
+            .AtLastSync([&](Result<int> res){
+                hits++;
+                CHECK(res);
+                CHECK(res.get() == 3);
+            });
+        b.Finish();
+    }
+    CHECK(hits == 1);
+}
