@@ -216,3 +216,36 @@ TEST_CASE("rpc: cross-thread transport stress") {
         CHECK(done == 200);
     }
 }
+
+struct FailTransport : IAsyncTransport {
+    using IAsyncTransport::IAsyncTransport;
+    void Send(JsonView) override {
+        throw std::runtime_error("simulated send failure");
+    }
+};
+
+// If Send() throws, the request never reached the wire: the pending promise
+// must be rejected immediately instead of hanging until the timeout.
+TEST_CASE("rpc: send failure rejects pending requests") {
+    rc::Strong<TestServer> server = rc::MakeStrong<TestServer>();
+    extraMethods(*server);
+    rc::Strong<IClientTransport> tr = rc::MakeStrong<FailTransport>(
+        Protocol::json_v2_compliant, server);
+    Client cli;
+    cli.SetTransport(tr);
+
+    CHECK_THROWS(req<int>(cli, "add", 1, 2));
+
+    int hits = 0;
+    {
+        auto b = cli.StartBatch();
+        cli.Request<int>(Method{"add", NoTimeout}, 1, 2)
+            .AtLastSync([&](Result<int> res){
+                hits++;
+                CHECK(!res);
+            });
+        cli.Notify("notif", 1, 2);
+        b.Finish();
+    }
+    CHECK(hits == 1);
+}

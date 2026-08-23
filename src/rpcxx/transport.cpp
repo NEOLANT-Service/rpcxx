@@ -327,6 +327,21 @@ struct IAsyncTransport::Impl {
             (*displaced)(FutureError(displacedMethod + ": Timeout Error"));
         }
     }
+    // Erase a pending request and reject it with `exc`. Used when the
+    // outgoing Send() failed: the request never reached the wire, so leaving
+    // it pending would just hang the caller until the timeout fires.
+    void rejectPending(size_t id, std::exception_ptr exc) noexcept {
+        std::optional<Promise<JsonView>> prom;
+        {
+            std::lock_guard lk(mut);
+            auto p = pending.find(id);
+            if (p == pending.end()) return;
+            prom.emplace(std::move(p->second.prom));
+            // Erase BEFORE fulfilling: continuations run inline.
+            pending.erase(p);
+        }
+        (*prom)(std::move(exc));
+    }
 };
 
 IAsyncTransport::IAsyncTransport(Protocol proto, rc::Weak<IHandler> h)
@@ -374,6 +389,8 @@ void IAsyncTransport::SendBatch(Batch batch)
     }
     auto arr = MakeArrayOf(size, alloc);
     unsigned idx = 0;
+    std::vector<size_t> ids;
+    ids.reserve(batch.methods.size());
     for (auto& n: batch.notifs) {
         d->wrapNotif(n.method, n.params.View(), [&](JsonView formatted){
             arr[idx++] = Copy(formatted, alloc);
@@ -381,6 +398,7 @@ void IAsyncTransport::SendBatch(Batch batch)
     }
     for (auto& m: batch.methods) {
         auto next = d->id++;
+        ids.push_back(next);
         d->addPending(m.method, next, std::move(m.cb), m.timeout);
         d->wrapMethod(next, m.method, m.params.View(), [&](JsonView formatted){
             arr[idx++] = Copy(formatted, alloc);
@@ -389,7 +407,12 @@ void IAsyncTransport::SendBatch(Batch batch)
     try {
         Send(JsonView(arr, size));
     } catch (std::exception& e) {
-        error("Send Batch Request", e);
+        // The batch never reached the wire: reject every pending request of
+        // the batch immediately instead of letting them hang until timeout.
+        for (auto id: ids) {
+            d->rejectPending(id, std::make_exception_ptr(
+                RpcException("Send Batch Request failed: " + string{e.what()}, ErrorCode::internal)));
+        }
     }
 }
 
@@ -402,15 +425,20 @@ void IAsyncTransport::SendNotify(string_view method, JsonView params) try
     error("Send Notify (" + string{method} + ')', e);
 }
 
-void IAsyncTransport::SendMethod(Method method, JsonView params, Promise<JsonView> cb) try
+void IAsyncTransport::SendMethod(Method method, JsonView params, Promise<JsonView> cb)
 {
     auto next = d->id++;
     d->addPending(string{method.name}, next, std::move(cb), method.timeout);
-    d->wrapMethod(next, method.name, params, [&](JsonView req){
-        Send(req);
-    });
-} catch (std::exception& e) {
-    error("Send Method", e);
+    try {
+        d->wrapMethod(next, method.name, params, [&](JsonView req){
+            Send(req);
+        });
+    } catch (std::exception& e) {
+        // The request never reached the wire: reject it immediately instead
+        // of leaving it pending until the timeout fires.
+        d->rejectPending(next, std::make_exception_ptr(
+            RpcException("Send Method failed: " + string{e.what()}, ErrorCode::internal)));
+    }
 }
 
 IAsyncTransport::~IAsyncTransport()
