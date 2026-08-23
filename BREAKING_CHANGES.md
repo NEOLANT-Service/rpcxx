@@ -75,7 +75,25 @@ observing the "current" context from a thread *other* than the one executing
 the handler will now get the fallback context instead. Within the handler
 thread itself nothing changes.
 
-## 5. Build system
+## 5. JSON-RPC behavior corrections
+
+- **`"id": null`** is no longer treated as a notification. Only a request
+  with *no* `id` member is a notification; an explicit null id is an invalid
+  Request object and now gets an `Invalid Request` (-32600) error response
+  with id null, per JSON-RPC 2.0.
+- **`IHandler::SetRoute` rejects route cycles** (assert +
+  `std::runtime_error`): installing a route whose target can route back to
+  the same handler throws instead of enabling caller-controlled recursion
+  depth. Direct self-routes (`SetRoute("self", self)`) remain allowed.
+- **`Send()` failure rejects pending requests immediately** with an
+  `RpcException` wrapping the send error, instead of leaving the caller's
+  `Future` hanging until the timeout.
+- **Exceptions from notify handlers no longer escape
+  `IAsyncTransport::Receive()`** (and no longer produce error parts inside
+  batch responses); they are logged via `error()` after the server's
+  exception handlers have run.
+
+## 6. Build system
 
 - The libFuzzer targets (`rpcxx-json-fuzz`, `rpcxx-msgpack-fuzz`) are now
   skipped when `RPCXX_TEST_TSAN=ON` — `-fsanitize=fuzzer,address` and
@@ -106,3 +124,13 @@ These changed no API and no valid observable behavior — they only remove UB:
 - `json_view`: `BasicMutJson` bool assignment, binary/string `copy()` and
   `algo::Copy` no-copy flags fixed (union member confusion); `maxIdxFor`
   off-by-one and `FieldIndex<0>` tuple serialization fixed.
+- `JsonPointer::FromString`: "/" and "#/" now produce the single empty-string
+  token per RFC 6901 (previously an uninitialized token), "#" is the root
+  pointer, the URI-form leading '/' is skipped, and '~' escapes no longer
+  stick for the rest of the token.
+- `Server` async completions (`Wrap`, `OnForward`) capture the server
+  weakly: rejecting an async method after the server was destroyed is no
+  longer a use-after-free.
+- Arena: allocations with `align > alignof(std::max_align_t)` now actually
+  honor their alignment and are freed with the matching aligned delete.
+- Dead code removed: `jv::detail` `fieldHelper`/`prepFields`.
