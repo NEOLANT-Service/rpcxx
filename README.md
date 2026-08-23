@@ -501,9 +501,9 @@ handlers, transports, executors) must be heap-allocated and owned by an
 `rc::Strong` from the moment it is shared — create them with
 `rc::MakeStrong<T>(...)`. `rc::Weak::lock()` is the only way to dereference a
 weak reference; it returns a `Strong` that keeps the object alive during use
-and refuses objects that are not `rc::Strong`-owned (assert in debug builds),
-which makes stack-allocated handlers/transports fail loudly instead of
-corrupting memory.
+and returns `nullptr` for objects that are not `rc::Strong`-owned (just like
+for expired ones), which turns stack-allocated handlers/transports into
+visible failures instead of memory corruption.
 
 ### Buffers (`include/membuff`)
 

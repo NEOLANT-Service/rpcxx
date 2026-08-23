@@ -26,7 +26,6 @@ SOFTWARE.
 #define RC_HPP
 
 #include <atomic>
-#include <cassert>
 #include <cstddef>
 #include <type_traits>
 #include <utility>
@@ -200,11 +199,11 @@ struct Weak {
     Weak(Strong<U> const& obj) : Weak(obj.get()) {}
 
     //! Lock the weak reference into a strong one. Returns nullptr when the
-    //! object has expired — and also when the object is alive but NOT owned
-    //! by any rc::Strong (e.g. stack- or statically-allocated): locking such
-    //! an object would make the temporary Strong delete stack memory on
-    //! destruction, so it is refused (assert in debug builds). Objects that
-    //! take part in weak references must be heap-allocated and owned via
+    //! object cannot be locked: either it has expired, or it is alive but NOT
+    //! owned by any rc::Strong (e.g. stack- or statically-allocated, or a raw
+    //! pointer published before ownership was taken) — locking such an object
+    //! would make the temporary Strong delete memory it does not own. Objects
+    //! that take part in weak references must be heap-allocated and owned via
     //! rc::Strong from the moment they are published — see rc::MakeStrong.
     Strong<T> lock() const noexcept {
         if (!block) return nullptr;
@@ -214,16 +213,13 @@ struct Weak {
         // Unref nulls the block in the same critical section that drops the
         // refcount to zero, a non-null pointer here implies _refs >= 1 for
         // any properly rc-owned object; _refs == 0 therefore means the object
-        // was never owned by a Strong.
+        // is not owned by a Strong and must not be locked.
         char* p = block->data.load(std::memory_order_acquire);
         Strong<T> r = nullptr;
         if (p) {
             T* obj = reinterpret_cast<T*>(p + offset);
             if (obj->_refs.load(std::memory_order_relaxed) != 0) {
                 r = obj;
-            } else {
-                assert(!"rc::Weak::lock() on an object not owned by rc::Strong "
-                        "(stack/static allocation or published before ownership)");
             }
         }
         _unlock(block->_sync);

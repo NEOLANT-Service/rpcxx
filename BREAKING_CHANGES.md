@@ -36,8 +36,8 @@ Enforcement:
 
 - `rc::Weak::lock()` refuses an object whose refcount is zero, i.e. one that
   no `rc::Strong` owns (stack/static allocation, or a raw pointer published
-  before ownership was taken). In debug builds this asserts; in release it
-  returns `nullptr`. Locking such an object previously worked by luck with
+  before ownership was taken): it simply returns `nullptr`, exactly as for an
+  expired object. Locking such an object previously worked by luck with
   `peek()` and would have deleted stack memory with `lock()`.
 - The destructors of `IHandler`, `IClientTransport`, `IAsyncTransport` and
   `Server` are now **protected**; the destructors of the final classes
