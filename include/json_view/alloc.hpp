@@ -100,26 +100,37 @@ struct arena {
         buffptr = std::exchange(o.buffptr, nullptr);
         space = std::exchange(o.space, 0);
         blockSize = o.blockSize;
-        allocs = std::exchange(o.allocs, std::forward_list<void*>{});
+        allocs = std::exchange(o.allocs, std::forward_list<Block>{});
     }
     ~arena() {
         clear();
     }
     void newBlock() {
-        buffptr = allocs.emplace_front(::operator new(blockSize, std::align_val_t(Arena::max_align)));
+        auto block = ::operator new(blockSize, std::align_val_t(Arena::max_align));
+        buffptr = allocs.emplace_front(block, Arena::max_align).ptr;
         space = blockSize;
     }
     void clear() {
         for (auto a: allocs) {
-            ::operator delete(a, std::align_val_t(Arena::max_align));
+            ::operator delete(a.ptr, std::align_val_t(a.align));
         }
         allocs.clear();
         buffptr = nullptr;
         space = 0;
     }
     void* doAlloc(size_t bytes, size_t align) {
+        if (meta_Unlikely(align > Arena::max_align)) {
+            // Over-aligned allocations cannot be served from the blocks (they
+            // are only max_align-aligned): allocate separately, remembering
+            // the alignment so clear() can pass it to the aligned delete.
+            auto p = ::operator new(bytes, std::align_val_t(align));
+            allocs.emplace_front(p, align);
+            return p;
+        }
         if (meta_Unlikely(bytes > blockSize)) {
-            return allocs.emplace_front(::operator new(bytes, std::align_val_t(Arena::max_align)));
+            auto p = ::operator new(bytes, std::align_val_t(Arena::max_align));
+            allocs.emplace_front(p, Arena::max_align);
+            return p;
         }
         if (meta_Unlikely(!std::align(align, bytes, buffptr, space))) {
             newBlock();
@@ -128,10 +139,15 @@ struct arena {
         return std::exchange(buffptr, static_cast<char*>(buffptr) + bytes);
     }
 
+    struct Block {
+        Block(void* ptr, size_t align) noexcept : ptr(ptr), align(align) {}
+        void* ptr;
+        size_t align;
+    };
     void* buffptr{};
     size_t space{};
     size_t blockSize{};
-    std::forward_list<void*> allocs;
+    std::forward_list<Block> allocs;
 };
 } //detail
 

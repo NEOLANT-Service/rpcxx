@@ -520,4 +520,28 @@ TEST_CASE("ub regressions")
         CHECK(cp.GetArray()[0].View(alloc).Get<int>() == 1);
         CHECK(cp.GetArray()[1].View(alloc).GetString() == "two");
     }
+    SUBCASE("arena honors over-alignment and never overlaps") {
+        DefaultArena<64> arena(128);
+        // Over-aligned allocations (align > max_align) must actually be
+        // aligned — they cannot be served from the max_align-aligned blocks.
+        void* p = arena.Allocate(64, 64);
+        CHECK(reinterpret_cast<uintptr_t>(p) % 64 == 0);
+        // Mixed sizes/alignments: no two live allocations may overlap.
+        struct R { char* p; size_t n; };
+        std::vector<R> rs;
+        for (size_t i = 1; i < 200; ++i) {
+            size_t al = size_t(1) << (i % 5); // 1..16
+            char* q = static_cast<char*>(arena.Allocate(i, al));
+            CHECK(reinterpret_cast<uintptr_t>(q) % al == 0);
+            for (auto& r: rs) {
+                CHECK(!(q < r.p + r.n && r.p < q + i));
+            }
+            memset(q, 0xAB, i);
+            rs.push_back({q, i});
+        }
+        // Reuse after Clear() still works.
+        arena.Clear();
+        void* p2 = arena.Allocate(64, 64);
+        CHECK(reinterpret_cast<uintptr_t>(p2) % 64 == 0);
+    }
 }
