@@ -62,7 +62,11 @@ add_test(NAME rpcxx-future-race-test COMMAND $<TARGET_FILE:rpcxx-future-race-tes
 
 if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     target_compile_options(rpcxx-test-deps INTERFACE -ftime-trace)
+endif()
 
+# libFuzzer targets require -fsanitize=fuzzer,address, which cannot coexist
+# with -fsanitize=thread: skip them entirely in TSAN builds.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND NOT RPCXX_TEST_TSAN)
     add_library(rpcxx-fuzz-deps INTERFACE)
     target_link_libraries(rpcxx-fuzz-deps INTERFACE rpcxx)
     target_compile_options(rpcxx-fuzz-deps INTERFACE -fsanitize=fuzzer,address)

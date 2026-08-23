@@ -91,6 +91,11 @@ CPMAddPackage(NAME rapidjson
 target_include_directories(rpcxx-json PRIVATE ${rapidjson_SOURCE_DIR}/include)
 
 if(RPCXX_WITH_TESTS)
+    # doctest 2.4.11 declares cmake_minimum_required(3.0), which CMake >= 4
+    # rejects at configure time; allow the old policy floor for dependencies.
+    # (2.4.12 fixes the floor upstream but changes expression-decomposition
+    # semantics that the existing tests rely on.)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
     CPMAddPackage("gh:doctest/doctest@2.4.11")
     CPMAddPackage(
         NAME benchmark
