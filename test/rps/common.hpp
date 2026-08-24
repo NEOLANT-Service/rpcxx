@@ -27,10 +27,13 @@ SOFTWARE.
 #include <rpcxx/rpcxx.hpp>
 
 struct WsTransport final : public QObject, rpcxx::IAsyncTransport {
-    WsTransport(rc::MakeStrongRef key, QWebSocket* ws) :
-        // No Qt parent: the transport is owned exclusively by rc::Strong.
-        QObject(nullptr),
-        IAsyncTransport(key, rpcxx::Protocol::json_v2_minified),
+    // Foreign-owned (rc::foreign_owned): parented to the socket, so Qt
+    // deletes the transport together with the connection. All rc references
+    // to it are Weak (the server's handler link, the Client's transport) and
+    // expire via ~WeakableVirtual. Single GUI thread only.
+    WsTransport(rc::foreign_owned_t foreign, QWebSocket* ws) :
+        QObject(ws),
+        IAsyncTransport(foreign, rpcxx::Protocol::json_v2_minified),
         sock(ws)
     {
         connect(ws, &QWebSocket::binaryMessageReceived, this, [this](QByteArray msg){

@@ -50,9 +50,10 @@ public:
         sock(sock_)
     {
         conns++;
-        // Deleting the socket on disconnect deletes us (its child) too.
+        // Deleting the socket on disconnect deletes us (its child) and the
+        // transport (also its child, foreign-owned) with it.
         connect(sock_, &QWebSocket::disconnected, sock_, &QObject::deleteLater);
-        transport = rc::MakeStrong<WsTransport>(sock);
+        transport = new WsTransport(rc::foreign_owned, sock);
         transport->SetHandler(this);
         Method("calc", [](int a, int b){
             return a + b;
@@ -66,7 +67,8 @@ public:
         });
     }
     QWebSocket* sock;
-    rc::Strong<WsTransport> transport;
+    // Non-owning: the transport is a child of sock (Qt parent/child).
+    WsTransport* transport;
 };
 
 int main(int argc, char *argv[])

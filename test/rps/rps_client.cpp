@@ -40,10 +40,12 @@ class TestClient final: public QObject, public rpcxx::Client
 {
     Q_OBJECT
 public:
-    TestClient(QWebSocket* sock) : sock(sock)
+    // Foreign-owned, Qt parent/child throughout: we and the transport are
+    // children of the socket, and the Client references the transport only
+    // via rc::Weak (expired automatically when the socket dies).
+    TestClient(QWebSocket* sock) : QObject(sock), sock(sock)
     {
-        transport = rc::MakeStrong<WsTransport>(sock);
-        SetTransport(transport);
+        SetTransport(new WsTransport(rc::foreign_owned, sock));
         connect(sock, &QWebSocket::binaryMessageReceived, this, [&](const QByteArray& frame){
             DefaultArena alloc;
             auto msg = ParseMsgPackInPlace({frame.constData(), unsigned(frame.size())}, alloc);
@@ -54,7 +56,6 @@ public:
     }
 
     QWebSocket* sock;
-    rc::Strong<WsTransport> transport;
     Promise<Json> prom;
 };
 
