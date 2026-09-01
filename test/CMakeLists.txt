@@ -94,6 +94,7 @@ if (RPCXX_WITH_CODEGEN)
         TARGET rpcxx-codegen-test)
     add_executable(rpcxx-codegen-test-exe rpcxx/codegen_test.cpp)
     target_link_libraries(rpcxx-codegen-test-exe PRIVATE rpcxx-codegen-test)
+    add_test(NAME rpcxx-codegen-test-exe COMMAND $<TARGET_FILE:rpcxx-codegen-test-exe>)
 endif()
 
 if (RPCXX_TEST_RPS)

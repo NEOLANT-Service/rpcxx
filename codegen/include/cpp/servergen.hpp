@@ -33,6 +33,10 @@ struct {server_name} : public rpcxx::Server
 {{
     template<int=0>
     {server_name}(rc::MakeStrongRef);
+    // Foreign-owned variant (e.g. a QObject with a parent): plain `new`,
+    // deleted by the owner, referenced via rc::Weak only — see rc::foreign_owned.
+    template<int=0>
+    {server_name}(rc::foreign_owned_t);
     {server_name}* as_{server_name}() noexcept {{return this;}}
 {methods}
 }};{describe}
@@ -41,6 +45,9 @@ struct {server_name} : public rpcxx::Server
 constexpr auto format_source = R"EOF(
 template<int>
 inline {server_name}::{server_name}(rc::MakeStrongRef key) : Server(key) {{{register_methods}
+}}
+template<int>
+inline {server_name}::{server_name}(rc::foreign_owned_t foreign) : Server(foreign) {{{register_methods}
 }}
 )EOF";
 
