@@ -381,14 +381,14 @@ struct IAsyncTransport::Impl {
 };
 
 IAsyncTransport::IAsyncTransport(rc::MakeStrongRef key, Protocol proto, rc::Weak<IHandler> h)
-    : IClientTransport(key)
+    : IClientTransport(key), d(new Impl)
 {
     d->handler = h;
     d->proto = proto;
 }
 
 IAsyncTransport::IAsyncTransport(rc::foreign_owned_t foreign, Protocol proto, rc::Weak<IHandler> h)
-    : IClientTransport(foreign)
+    : IClientTransport(foreign), d(new Impl)
 {
     d->handler = h;
     d->proto = proto;

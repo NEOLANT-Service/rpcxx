@@ -103,7 +103,7 @@ private:
     void SendMethod(Method method, JsonView params, Promise<JsonView> cb) final;
 
     struct Impl;
-    FastPimpl<Impl, 180> d;
+    std::unique_ptr<Impl> d;
 };
 
 struct Transport final : IAsyncTransport {
